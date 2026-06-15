@@ -117,6 +117,8 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
         wifiP2pDevice = device
         val config = WifiP2pConfig().apply {
             deviceAddress = device.deviceAddress
+            // Match the Alternative app P2P setup. The glasses expect WPS PBC.
+            // https://github.com/FerSaiyan/Alternative-HeyCyan-App-and-SDK/blob/14bd397bd64571838ae81d95b848b5e016ed1d4f/android/CyanBridge/app/src/main/java/com/fersaiyan/cyanbridge/ui/wifi/p2p/WifiP2pManagerSingleton.kt#L151-L155
             wps.setup = 0
         }
         
@@ -162,6 +164,9 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
     fun resetDeviceP2p() {
         Log.d(TAG, "resetDeviceP2p called - sending glassesControl[2,1,15]")
         try {
+            // Vendor-specific glasses command observed in the Alternative app. It asks the
+            // glasses to reset/re-prepare their Wi-Fi P2P endpoint before retrying discovery.
+            // https://github.com/FerSaiyan/Alternative-HeyCyan-App-and-SDK/blob/14bd397bd64571838ae81d95b848b5e016ed1d4f/android/CyanBridge/app/src/main/java/com/fersaiyan/cyanbridge/ui/wifi/p2p/WifiP2pManagerSingleton.kt#L195-L205
             LargeDataHandler.getInstance().glassesControl(byteArrayOf(0x02, 0x01, 0x0F)) { _, resp ->
                 Log.d(TAG, "resetDeviceP2p callback: type=${resp.dataType}, error=${resp.errorCode}")
             }

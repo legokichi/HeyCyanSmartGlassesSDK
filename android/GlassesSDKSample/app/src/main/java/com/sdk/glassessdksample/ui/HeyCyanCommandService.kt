@@ -1,12 +1,13 @@
 package com.sdk.glassessdksample.ui
 
-import android.app.Activity
+import android.app.Service
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.le.ScanResult
 import android.content.Context
+import android.content.Intent
 import android.net.wifi.p2p.WifiP2pDevice
 import android.net.wifi.p2p.WifiP2pInfo
-import android.os.Bundle
+import android.os.IBinder
 import android.os.PowerManager
 import com.oudmon.ble.base.bluetooth.BleOperateManager
 import com.oudmon.ble.base.bluetooth.DeviceManager
@@ -28,17 +29,22 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 
-class HeyCyanCommandActivity : Activity() {
+class HeyCyanCommandService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var mediaSync: GlassMediaSync
     private var p2pReceiver: android.content.BroadcastReceiver? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var commandIntent: Intent? = null
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+    override fun onCreate() {
+        super.onCreate()
         mediaSync = GlassMediaSync(applicationContext)
-        val command = intent.getStringExtra(EXTRA_COMMAND).orEmpty().ifBlank { COMMAND_STATUS }
-        HeyCyanLogger.info(this, command, "activity command received")
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        commandIntent = intent
+        val command = intent?.getStringExtra(EXTRA_COMMAND).orEmpty().ifBlank { COMMAND_STATUS }
+        HeyCyanLogger.info(this, command, "service command received")
         acquireWakeLock()
         scope.launch {
             try {
@@ -46,10 +52,13 @@ class HeyCyanCommandActivity : Activity() {
             } finally {
                 releaseWakeLock()
                 unregisterP2pReceiver()
-                finishAndRemoveTask()
+                stopSelf(startId)
             }
         }
+        return START_NOT_STICKY
     }
+
+    override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
         scope.cancel()
@@ -89,7 +98,9 @@ class HeyCyanCommandActivity : Activity() {
     }
 
     private suspend fun scanBle(command: String): List<SmartWatch> {
-        val seconds = intent.getIntExtra(EXTRA_SECONDS, DEFAULT_SCAN_SECONDS).coerceIn(1, 60)
+        val seconds = commandIntent?.getIntExtra(EXTRA_SECONDS, DEFAULT_SCAN_SECONDS)
+            ?.coerceIn(1, 60)
+            ?: DEFAULT_SCAN_SECONDS
         val devices = scanBleDevices(command, seconds)
         HeyCyanLogger.info(this, command, "scan summary count=${devices.size}")
         devices.forEachIndexed { index, device ->
@@ -103,7 +114,7 @@ class HeyCyanCommandActivity : Activity() {
     }
 
     private suspend fun connectBle(command: String) {
-        val address = intent.getStringExtra(EXTRA_ADDRESS)
+        val address = commandIntent?.getStringExtra(EXTRA_ADDRESS)
             ?: DeviceManager.getInstance().deviceAddress.orEmpty()
         if (address.isBlank()) {
             HeyCyanLogger.warn(this, command, "NO_BLE_ADDRESS")
@@ -113,9 +124,11 @@ class HeyCyanCommandActivity : Activity() {
     }
 
     private suspend fun scanAndConnect(command: String) {
-        val seconds = intent.getIntExtra(EXTRA_SECONDS, DEFAULT_SCAN_SECONDS).coerceIn(1, 60)
-        val targetAddress = intent.getStringExtra(EXTRA_ADDRESS)?.takeIf { it.isNotBlank() }
-        val nameContains = intent.getStringExtra(EXTRA_NAME_CONTAINS)?.takeIf { it.isNotBlank() }
+        val seconds = commandIntent?.getIntExtra(EXTRA_SECONDS, DEFAULT_SCAN_SECONDS)
+            ?.coerceIn(1, 60)
+            ?: DEFAULT_SCAN_SECONDS
+        val targetAddress = commandIntent?.getStringExtra(EXTRA_ADDRESS)?.takeIf { it.isNotBlank() }
+        val nameContains = commandIntent?.getStringExtra(EXTRA_NAME_CONTAINS)?.takeIf { it.isNotBlank() }
         val devices = scanBleDevices(command, seconds)
         val target = devices.firstOrNull { device ->
             targetAddress != null && device.deviceAddress.equals(targetAddress, ignoreCase = true)
@@ -171,11 +184,11 @@ class HeyCyanCommandActivity : Activity() {
         val devices = linkedSetOf<SmartWatch>()
         val callback = object : ScanWrapperCallback {
             override fun onStart() {
-                HeyCyanLogger.info(this@HeyCyanCommandActivity, command, "ble scan started seconds=$seconds")
+                HeyCyanLogger.info(this@HeyCyanCommandService, command, "ble scan started seconds=$seconds")
             }
 
             override fun onStop() {
-                HeyCyanLogger.info(this@HeyCyanCommandActivity, command, "ble scan stopped count=${devices.size}")
+                HeyCyanLogger.info(this@HeyCyanCommandService, command, "ble scan stopped count=${devices.size}")
             }
 
             override fun onLeScan(device: BluetoothDevice?, rssi: Int, scanRecord: ByteArray?) {
@@ -184,7 +197,7 @@ class HeyCyanCommandActivity : Activity() {
             }
 
             override fun onScanFailed(errorCode: Int) {
-                HeyCyanLogger.warn(this@HeyCyanCommandActivity, command, "ble scan failed errorCode=$errorCode")
+                HeyCyanLogger.warn(this@HeyCyanCommandService, command, "ble scan failed errorCode=$errorCode")
             }
 
             override fun onParsedData(device: BluetoothDevice?, scanRecord: ScanRecord?) {
@@ -195,11 +208,11 @@ class HeyCyanCommandActivity : Activity() {
 
         withContext(Dispatchers.Main) {
             BleScannerHelper.getInstance().reSetCallback()
-            BleScannerHelper.getInstance().scanDevice(this@HeyCyanCommandActivity, null, callback)
+            BleScannerHelper.getInstance().scanDevice(this@HeyCyanCommandService, null, callback)
         }
         delay(seconds * 1000L)
         withContext(Dispatchers.Main) {
-            BleScannerHelper.getInstance().stopScan(this@HeyCyanCommandActivity)
+            BleScannerHelper.getInstance().stopScan(this@HeyCyanCommandService)
         }
         return devices.sortedByDescending { it.rssi }
     }

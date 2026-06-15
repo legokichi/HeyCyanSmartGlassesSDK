@@ -2,14 +2,24 @@
 set -euo pipefail
 
 ACTION="com.sdk.glassessdksample.COMMAND"
-COMPONENT="com.sdk.glassessdksample/.ui.HeyCyanCommandActivity"
+SERVICE="com.sdk.glassessdksample/.ui.HeyCyanCommandService"
 LOG_FILE="${HOME}/heycyan-loop.log"
 PID_FILE="${HOME}/.heycyan-loop.pid"
 
 run_command() {
   local command="$1"
+  local wait_seconds="$2"
+  shift 2 || true
+  logcat -c 2>/dev/null || true
+  am startservice -n "$SERVICE" -a "$ACTION" --es command "$command" "$@" >/dev/null
+  sleep "$wait_seconds"
+  logcat -d -s HeyCyanCmd AndroidRuntime 2>/dev/null | tee -a "$LOG_FILE" || true
+}
+
+start_command() {
+  local command="$1"
   shift || true
-  am start -n "$COMPONENT" -a "$ACTION" --es command "$command" "$@" >/dev/null
+  am startservice -n "$SERVICE" -a "$ACTION" --es command "$command" "$@" >/dev/null
 }
 
 usage() {
@@ -37,45 +47,45 @@ USAGE
 
 case "${1:-}" in
   status)
-    run_command "status"
+    run_command "status" 2
     ;;
   scan)
     seconds="${2:-15}"
-    run_command "scan" --ei seconds "$seconds"
+    run_command "scan" "$((seconds + 5))" --ei seconds "$seconds"
     ;;
   connect)
     if [ "${2:-}" ]; then
-      run_command "connect" --es address "$2"
+      run_command "connect" 24 --es address "$2"
     else
-      run_command "connect"
+      run_command "connect" 24
     fi
     ;;
   scan-connect)
     seconds="${3:-15}"
     if [ "${2:-}" ]; then
-      run_command "scan_connect" --es name_contains "$2" --ei seconds "$seconds"
+      run_command "scan_connect" "$((seconds + 24))" --es name_contains "$2" --ei seconds "$seconds"
     else
-      run_command "scan_connect" --ei seconds "$seconds"
+      run_command "scan_connect" "$((seconds + 24))" --ei seconds "$seconds"
     fi
     ;;
   disconnect)
-    run_command "disconnect"
+    run_command "disconnect" 3
     ;;
   shot|capture)
-    run_command "capture"
+    run_command "capture" 18
     ;;
   sync)
-    run_command "sync"
+    run_command "sync" 60
     ;;
   shot-sync|capture-sync)
-    run_command "capture_sync"
+    run_command "capture_sync" 75
     ;;
   loop)
     interval="${2:-60}"
     command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock || true
     while true; do
       printf '%s capture_sync\n' "$(date -Is)" | tee -a "$LOG_FILE"
-      run_command "capture_sync" 2>&1 | tee -a "$LOG_FILE" || true
+      start_command "capture_sync" 2>&1 | tee -a "$LOG_FILE" || true
       sleep "$interval"
     done
     ;;
@@ -85,7 +95,7 @@ case "${1:-}" in
     command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock || true
     for i in $(seq 1 "$count"); do
       printf '%s capture_sync %s/%s\n' "$(date -Is)" "$i" "$count" | tee -a "$LOG_FILE"
-      run_command "capture_sync" 2>&1 | tee -a "$LOG_FILE" || true
+      start_command "capture_sync" 2>&1 | tee -a "$LOG_FILE" || true
       sleep "$interval"
     done
     command -v termux-wake-unlock >/dev/null 2>&1 && termux-wake-unlock || true

@@ -16,10 +16,10 @@
     <string name="text_13">Volume</string>
     <string name="text_14">Media Count</string>
     <string name="text_15">Download Media</string>
-    <string name="loop3_title">App-managed capture loop</string>
-    <string name="loop3_interval_label">Interval seconds</string>
-    <string name="loop3_start">Start</string>
-    <string name="loop3_stop">Stop</string>
-    <string name="loop3_start_requested">Capture loop start requested</string>
-    <string name="loop3_stop_requested">Capture loop stop requested</string>
+    <string name="periodical_capture_title">Periodical capture</string>
+    <string name="periodical_capture_interval_label">Interval seconds</string>
+    <string name="periodical_capture_start">Start</string>
+    <string name="periodical_capture_stop">Stop</string>
+    <string name="periodical_capture_start_requested">Periodical capture start requested</string>
+    <string name="periodical_capture_stop_requested">Periodical capture stop requested</string>
 </resources>

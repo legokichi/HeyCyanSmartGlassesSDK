@@ -133,8 +133,8 @@ class MainActivity : AppCompatActivity() {
             binding.btnVolume,
             binding.btnMediaCount,
             binding.btnDataDownload,
-            binding.btnLoop3Start,
-            binding.btnLoop3Stop
+            binding.btnPeriodicalCaptureStart,
+            binding.btnPeriodicalCaptureStop
         ) {
             when (this) {
                 binding.btnScan -> {
@@ -387,32 +387,32 @@ class MainActivity : AppCompatActivity() {
                         startDataDownload()
                     }
                 }
-                binding.btnLoop3Start -> {
-                    startLoop3FromUi()
+                binding.btnPeriodicalCaptureStart -> {
+                    startPeriodicalCaptureFromUi()
                 }
-                binding.btnLoop3Stop -> {
-                    stopLoop3FromUi()
+                binding.btnPeriodicalCaptureStop -> {
+                    stopPeriodicalCaptureFromUi()
                 }
             }
         }
     }
 
-    private fun startLoop3FromUi() {
-        val seconds = binding.inputLoop3Interval.text
+    private fun startPeriodicalCaptureFromUi() {
+        val seconds = binding.inputPeriodicalCaptureInterval.text
             ?.toString()
             ?.toIntOrNull()
             ?.coerceIn(1, 86_400)
             ?: 60
-        binding.inputLoop3Interval.setText(seconds.toString())
-        sendCommandService(HeyCyanCommandService.COMMAND_LOOP3) {
+        binding.inputPeriodicalCaptureInterval.setText(seconds.toString())
+        sendCommandService(HeyCyanCommandService.COMMAND_PERIODICAL_CAPTURE) {
             putExtra(HeyCyanCommandService.EXTRA_SECONDS, seconds)
         }
-        Toast.makeText(this, getString(R.string.loop3_start_requested), Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, getString(R.string.periodical_capture_start_requested), Toast.LENGTH_SHORT).show()
     }
 
-    private fun stopLoop3FromUi() {
-        sendCommandService(HeyCyanCommandService.COMMAND_LOOP3_STOP)
-        Toast.makeText(this, getString(R.string.loop3_stop_requested), Toast.LENGTH_SHORT).show()
+    private fun stopPeriodicalCaptureFromUi() {
+        sendCommandService(HeyCyanCommandService.COMMAND_PERIODICAL_CAPTURE_STOP)
+        Toast.makeText(this, getString(R.string.periodical_capture_stop_requested), Toast.LENGTH_SHORT).show()
     }
 
     private fun sendCommandService(command: String, configure: Intent.() -> Unit = {}) {

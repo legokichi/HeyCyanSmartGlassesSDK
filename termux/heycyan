@@ -78,14 +78,14 @@ case "${1:-}" in
     run_command "sync" 60
     ;;
   shot-sync|capture-sync)
-    run_command "capture_sync" 75
+    run_command "capture_sync" 120
     ;;
   loop)
     interval="${2:-60}"
     command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock || true
     while true; do
       printf '%s capture_sync\n' "$(date -Is)" | tee -a "$LOG_FILE"
-      start_command "capture_sync" 2>&1 | tee -a "$LOG_FILE" || true
+      run_command "capture_sync" 120 || true
       sleep "$interval"
     done
     ;;
@@ -95,7 +95,7 @@ case "${1:-}" in
     command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock || true
     for i in $(seq 1 "$count"); do
       printf '%s capture_sync %s/%s\n' "$(date -Is)" "$i" "$count" | tee -a "$LOG_FILE"
-      start_command "capture_sync" 2>&1 | tee -a "$LOG_FILE" || true
+      run_command "capture_sync" 120 || true
       sleep "$interval"
     done
     command -v termux-wake-unlock >/dev/null 2>&1 && termux-wake-unlock || true

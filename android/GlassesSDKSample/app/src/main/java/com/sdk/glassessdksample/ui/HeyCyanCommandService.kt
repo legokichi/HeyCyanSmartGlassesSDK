@@ -258,31 +258,18 @@ class HeyCyanCommandService : Service() {
     }
 
     private suspend fun captureSync(command: String) {
-        val beforeIp = resolveDeviceIp(null)
-        val before = beforeIp?.let { ip ->
-            runCatching { mediaSync.fetchJpgNames(ip) }
-                .onFailure { HeyCyanLogger.warn(this, command, "baseline fetch failed ip=$ip", it) }
-                .getOrNull()
-        }
-        HeyCyanLogger.info(this, command, "baseline count=${before?.size ?: -1}")
-
         val captureResponse = capture(command) ?: return
-        delay(3000L)
+        delay(5000L)
 
         val ip = resolveDeviceIp(captureResponse.p2pIp) ?: run {
             HeyCyanLogger.warn(this, command, "NO_P2P_IP_AFTER_CAPTURE")
             return
         }
-        val current = runCatching { mediaSync.fetchJpgNames(ip) }
+        val targets = runCatching { mediaSync.fetchJpgNames(ip) }
             .onFailure { HeyCyanLogger.warn(this, command, "media list fetch failed ip=$ip", it) }
             .getOrNull()
             ?: return
-        val targets = before?.let { current - it } ?: emptySet()
-        HeyCyanLogger.info(this, command, "current=${current.size} new=${targets.size}")
-        if (before == null) {
-            HeyCyanLogger.warn(this, command, "sync skipped because baseline was unavailable")
-            return
-        }
+        HeyCyanLogger.info(this, command, "sync after capture count=${targets.size}")
         saveTargets(command, ip, targets)
     }
 
@@ -304,25 +291,62 @@ class HeyCyanCommandService : Service() {
             HeyCyanLogger.info(this, command, "no files to save")
             return
         }
+        var currentIp = ip
         var saved = 0
         var deleted = 0
         var deletePending = 0
+        val savedFiles = mutableListOf<String>()
+
         targets.forEach { fileName ->
-            runCatching { mediaSync.saveAndDelete(ip, fileName) }
-                .onSuccess { result ->
-                    saved++
-                    when (result) {
-                        is GlassMediaSync.SyncResult.SavedAndDeleted -> {
-                            deleted++
-                            HeyCyanLogger.info(this, command, "saved_and_deleted file=${result.fileName} uri=${result.uri}")
-                        }
-                        is GlassMediaSync.SyncResult.SavedDeleteFailed -> {
-                            deletePending++
-                            HeyCyanLogger.warn(this, command, "saved_delete_pending file=${result.fileName} uri=${result.uri}")
+            val uri = runCatching { mediaSync.save(currentIp, fileName) }
+                .recoverCatching { firstError ->
+                    HeyCyanLogger.warn(this, command, "save failed once file=$fileName; reconnecting P2P", firstError)
+                    currentIp = resolveDeviceIp(null) ?: throw firstError
+                    mediaSync.save(currentIp, fileName)
+                }
+                .onFailure { HeyCyanLogger.warn(this, command, "save failed file=$fileName", it) }
+                .getOrNull()
+
+            if (uri != null) {
+                saved++
+                savedFiles.add(fileName)
+                HeyCyanLogger.info(this, command, "saved file=$fileName uri=$uri")
+            }
+        }
+
+        if (savedFiles.isNotEmpty()) {
+            HeyCyanLogger.info(this, command, "resetting P2P before remote delete")
+            unregisterTransferNotifyListener()
+            unregisterP2pReceiver()
+            val manager = WifiP2pManagerSingleton.getInstance(applicationContext)
+            manager.resetDeviceP2p()
+            withTimeoutOrNull(5000L) {
+                suspendCancellableCoroutine { continuation ->
+                    manager.removeGroup { success ->
+                        if (continuation.isActive) {
+                            continuation.resume(success)
                         }
                     }
                 }
-                .onFailure { HeyCyanLogger.warn(this, command, "save failed file=$fileName", it) }
+            }
+            delay(3000L)
+        }
+
+        savedFiles.forEach { fileName ->
+            runCatching { mediaSync.delete(fileName) }
+                .onSuccess { deleteOk ->
+                    if (deleteOk) {
+                        deleted++
+                        HeyCyanLogger.info(this, command, "deleted remote file=$fileName")
+                    } else {
+                        deletePending++
+                        HeyCyanLogger.warn(this, command, "delete response timed out file=$fileName; next sync will verify")
+                    }
+                }
+                .onFailure {
+                    deletePending++
+                    HeyCyanLogger.warn(this, command, "delete failed file=$fileName", it)
+                }
         }
         HeyCyanLogger.info(this, command, "sync summary saved=$saved deleted=$deleted deletePending=$deletePending")
     }

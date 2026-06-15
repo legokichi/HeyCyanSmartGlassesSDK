@@ -29,6 +29,16 @@ class GlassMediaSync(private val context: Context) {
     }
 
     suspend fun saveAndDelete(baseIp: String, fileName: String): SyncResult = withContext(Dispatchers.IO) {
+        val galleryUri = save(baseIp, fileName)
+        val deleteOk = delete(fileName)
+        if (deleteOk) {
+            SyncResult.SavedAndDeleted(fileName, galleryUri)
+        } else {
+            SyncResult.SavedDeleteFailed(fileName, galleryUri)
+        }
+    }
+
+    suspend fun save(baseIp: String, fileName: String): Uri = withContext(Dispatchers.IO) {
         val encodedName = fileName.encodePath()
         val fileUrl = "http://$baseIp/files/$encodedName"
         val tempFile = File(context.cacheDir, "heycyan_${fileName.substringAfterLast('/')}").apply {
@@ -37,17 +47,13 @@ class GlassMediaSync(private val context: Context) {
 
         try {
             downloadToFile(fileUrl, tempFile)
-            val galleryUri = saveToGallery(tempFile, fileName.substringAfterLast('/'))
-            val deleteOk = deleteRemote(fileName)
-            if (deleteOk) {
-                SyncResult.SavedAndDeleted(fileName, galleryUri)
-            } else {
-                SyncResult.SavedDeleteFailed(fileName, galleryUri)
-            }
+            saveToGallery(tempFile, fileName.substringAfterLast('/'))
         } finally {
             tempFile.delete()
         }
     }
+
+    suspend fun delete(fileName: String): Boolean = deleteRemote(fileName)
 
     private fun getText(url: String): String {
         val request = Request.Builder().url(url).get().build()
@@ -168,9 +174,10 @@ class GlassMediaSync(private val context: Context) {
 
         val handle = FileHandle.getInstance()
         return try {
+            handle.initRegister()
             handle.registerCallback(callback)
             handle.executeFileDelete(fileName.substringAfterLast('/'))
-            withTimeoutOrNull(10000L) { result.await() } ?: false
+            withTimeoutOrNull(15000L) { result.await() } ?: false
         } catch (e: Exception) {
             Log.w(TAG, "BLE delete threw: $fileName", e)
             false

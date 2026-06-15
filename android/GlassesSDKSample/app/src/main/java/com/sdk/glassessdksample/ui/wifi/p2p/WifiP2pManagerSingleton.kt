@@ -104,13 +104,13 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
     
     fun connectToDevice(device: WifiP2pDevice) {
         if (connecting) {
-            Log.d(TAG, "P2P正在连接,不调用连接返回")
+            Log.d(TAG, "P2P is already connecting, skipping duplicate connect")
             callbacks.forEach { it.connecting() }
             return
         }
         
         if (connected) {
-            Log.d(TAG, "P2P已经连接上了，直接返回")
+            Log.d(TAG, "P2P is already connected, skipping duplicate connect")
             return
         }
         
@@ -121,7 +121,9 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
         }
         
         connecting = true
-        Log.d(TAG, "已经在连接设备: ${device.deviceName}")
+        handler.removeCallbacks(connectTimeOut)
+        handler.postDelayed(connectTimeOut, 16000L)
+        Log.d(TAG, "Connecting P2P device: ${device.deviceName}")
         
         wifiP2pManager.connect(wifiP2pChannel, config, object : WifiP2pManager.ActionListener {
             override fun onSuccess() {
@@ -132,6 +134,7 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
             override fun onFailure(reason: Int) {
                 Log.e(TAG, "Connect request failed: $reason")
                 connecting = false
+                handler.removeCallbacks(connectTimeOut)
                 callbacks.forEach { it.onConnectRequestFailed(reason) }
             }
         })
@@ -170,6 +173,11 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
     fun resetFailCount() {
         connectRetry = 0
         discoveryRetry = 0
+        connected = false
+        connecting = false
+        wifiP2pDevice = null
+        handler.removeCallbacks(connectTimeOut)
+        handler.removeCallbacks(discoveryTimeOut)
     }
     
     fun resetPeerDiscovery() {
@@ -261,12 +269,14 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
     internal fun onConnectionInfoAvailable(info: WifiP2pInfo) {
         connecting = false
         connected = info.groupFormed
+        handler.removeCallbacks(connectTimeOut)
         callbacks.forEach { it.onConnected(info) }
     }
     
     internal fun onDisconnected() {
         connecting = false
         connected = false
+        handler.removeCallbacks(connectTimeOut)
         callbacks.forEach { it.onDisconnected() }
     }
     
@@ -289,12 +299,12 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
             connecting = false
             if (connectRetry < 1) {
                 wifiP2pDevice?.let { device ->
-                    Log.d(TAG, "内部连接重试连接一次")
+                    Log.d(TAG, "Retrying P2P connect once")
                     connectToDevice(device)
                 }
                 connectRetry++
             } else {
-                Log.d(TAG, "不重连，等外部超时")
+                Log.d(TAG, "P2P connect timed out after retry")
                 callbacks.forEach { it.retryAlsoFailed() }
             }
         }

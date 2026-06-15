@@ -11,10 +11,8 @@ import android.util.Log
 import android.webkit.MimeTypeMap
 import com.oudmon.ble.base.communication.file.FileHandle
 import com.oudmon.ble.base.communication.file.SimpleCallback
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
@@ -41,13 +39,13 @@ class GlassMediaSync(private val context: Context) {
     }
 
     suspend fun fetchMediaConfig(baseIp: String): MediaConfig = withContext(Dispatchers.IO) {
-        val body = getText("http://$baseIp/files/media.config")
+        val body = getTextOrEmptyOnNoMedia("http://$baseIp/files/media.config")
         MediaConfig(body, parseFileNames(body))
     }
 
     suspend fun saveAndDelete(baseIp: String, fileName: String): SyncResult = withContext(Dispatchers.IO) {
         val galleryUri = save(baseIp, fileName)
-        val deleteOk = delete(fileName)
+        val deleteOk = requestDelete(fileName)
         if (deleteOk) {
             SyncResult.SavedAndDeleted(fileName, galleryUri)
         } else {
@@ -70,11 +68,25 @@ class GlassMediaSync(private val context: Context) {
         }
     }
 
-    suspend fun delete(fileName: String): Boolean = deleteRemote(fileName)
+    suspend fun requestDelete(fileName: String): Boolean = requestRemoteDelete(fileName)
 
     private fun getText(url: String): String {
         val request = Request.Builder().url(url).get().build()
         client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IOException("GET $url failed: ${response.code}")
+            }
+            return response.body?.string().orEmpty()
+        }
+    }
+
+    private fun getTextOrEmptyOnNoMedia(url: String): String {
+        val request = Request.Builder().url(url).get().build()
+        client.newCall(request).execute().use { response ->
+            if (response.code == 500) {
+                Log.i(TAG, "GET $url returned 500; treating media.config as empty")
+                return ""
+            }
             if (!response.isSuccessful) {
                 throw IOException("GET $url failed: ${response.code}")
             }
@@ -198,17 +210,14 @@ class GlassMediaSync(private val context: Context) {
         return candidate
     }
 
-    private suspend fun deleteRemote(fileName: String): Boolean {
-        val result = CompletableDeferred<Boolean>()
+    private suspend fun requestRemoteDelete(fileName: String): Boolean {
         val callback = object : SimpleCallback() {
             override fun onDeletePlate() {
                 Log.i(TAG, "BLE delete succeeded: $fileName")
-                result.complete(true)
             }
 
             override fun onDeletePlateError(code: Int) {
                 Log.w(TAG, "BLE delete failed: $fileName code=$code")
-                result.complete(false)
             }
         }
 
@@ -217,7 +226,7 @@ class GlassMediaSync(private val context: Context) {
             handle.initRegister()
             handle.registerCallback(callback)
             handle.executeFileDelete(fileName.substringAfterLast('/'))
-            withTimeoutOrNull(5000L) { result.await() } ?: false
+            true
         } catch (e: Exception) {
             Log.w(TAG, "BLE delete threw: $fileName", e)
             false

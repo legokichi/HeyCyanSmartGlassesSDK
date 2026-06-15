@@ -355,31 +355,34 @@ class HeyCyanCommandService : Service() {
             return
         }
         val savedFiles = saveOnly(ip, targets, command)
-        var deleted = 0
-        var deletePending = 0
+        var deleteRequested = 0
+        var deleteRequestFailed = 0
 
         if (savedFiles.isNotEmpty()) {
             prepareRemoteDelete(command)
         }
 
         savedFiles.forEach { fileName ->
-            logInfo(command, "deleting remote file=$fileName")
-            runCatching { mediaSync.delete(fileName) }
-                .onSuccess { deleteOk ->
-                    if (deleteOk) {
-                        deleted++
-                        logInfo(command, "deleted remote file=$fileName")
+            logInfo(command, "requesting remote delete file=$fileName")
+            runCatching { mediaSync.requestDelete(fileName) }
+                .onSuccess { requested ->
+                    if (requested) {
+                        deleteRequested++
+                        logInfo(command, "remote delete requested file=$fileName")
                     } else {
-                        deletePending++
-                        logWarn(command, "delete response timed out file=$fileName; next sync will verify")
+                        deleteRequestFailed++
+                        logWarn(command, "remote delete request failed file=$fileName")
                     }
                 }
                 .onFailure {
-                    deletePending++
-                    logWarn(command, "delete failed file=$fileName", it)
+                    deleteRequestFailed++
+                    logWarn(command, "remote delete request threw file=$fileName", it)
                 }
         }
-        logInfo(command, "sync summary saved=${savedFiles.size} deleted=$deleted deletePending=$deletePending")
+        logInfo(
+            command,
+            "sync summary saved=${savedFiles.size} deleteRequested=$deleteRequested deleteRequestFailed=$deleteRequestFailed"
+        )
     }
 
     private suspend fun prepareRemoteDelete(command: String) {

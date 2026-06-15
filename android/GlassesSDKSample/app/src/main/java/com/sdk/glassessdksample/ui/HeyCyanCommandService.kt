@@ -14,6 +14,7 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.core.app.NotificationCompat
 import com.oudmon.ble.base.bluetooth.BleOperateManager
 import com.oudmon.ble.base.communication.LargeDataHandler
@@ -70,6 +71,18 @@ class HeyCyanCommandService : Service() {
                 }
                 START_NOT_STICKY
             }
+            COMMAND_SYNC_MEDIA_ALL -> {
+                scope.launch {
+                    try {
+                        syncAllMedia()
+                    } finally {
+                        unregisterTransferNotifyListener()
+                        unregisterP2pReceiver()
+                        stopSelf(startId)
+                    }
+                }
+                START_NOT_STICKY
+            }
             else -> {
                 logWarn(command.ifBlank { "unknown" }, "unsupported service command")
                 stopSelf(startId)
@@ -90,14 +103,24 @@ class HeyCyanCommandService : Service() {
 
     private fun logInfo(command: String, message: String) {
         Log.i(TAG, "[$command] $message")
+        broadcastProgress(command, message)
     }
 
     private fun logWarn(command: String, message: String, throwable: Throwable? = null) {
         Log.w(TAG, "[$command] $message", throwable)
+        broadcastProgress(command, "WARN: $message")
     }
 
     private fun logError(command: String, message: String, throwable: Throwable? = null) {
         Log.e(TAG, "[$command] $message", throwable)
+        broadcastProgress(command, "ERROR: $message")
+    }
+
+    private fun broadcastProgress(command: String, message: String) {
+        LocalBroadcastManager.getInstance(this).sendBroadcast(
+            Intent(ACTION_MEDIA_SYNC_PROGRESS)
+                .putExtra(EXTRA_PROGRESS_LINE, "[$command] $message")
+        )
     }
 
     private fun startPeriodicalCaptureJob(intent: Intent?) {
@@ -208,6 +231,23 @@ class HeyCyanCommandService : Service() {
         saveTargets(ip, targets)
     }
 
+    private suspend fun syncAllMedia() {
+        if (!BleOperateManager.getInstance().isConnected) {
+            logWarn(COMMAND_SYNC_MEDIA_ALL, "BLE_NOT_CONNECTED")
+            return
+        }
+        val ip = resolveDeviceIp(null) ?: run {
+            logWarn(COMMAND_SYNC_MEDIA_ALL, "NO_P2P_IP")
+            return
+        }
+        val targets = runCatching { mediaSync.fetchFileNames(ip) }
+            .onFailure { logWarn(COMMAND_SYNC_MEDIA_ALL, "media list fetch failed ip=$ip", it) }
+            .getOrNull()
+            ?: return
+        logInfo(COMMAND_SYNC_MEDIA_ALL, "sync all media count=${targets.size}")
+        saveTargets(ip, targets, COMMAND_SYNC_MEDIA_ALL)
+    }
+
     private suspend fun periodicalCapture() {
         val intervalSeconds = commandIntent?.getIntExtra(EXTRA_SECONDS, DEFAULT_LOOP_SECONDS)
             ?.coerceIn(1, 24 * 60 * 60)
@@ -262,9 +302,13 @@ class HeyCyanCommandService : Service() {
         logInfo(COMMAND_PERIODICAL_CAPTURE_STOP, "periodical_capture stop requested")
     }
 
-    private suspend fun saveOnly(ip: String, targets: Set<String>): List<String> {
+    private suspend fun saveOnly(
+        ip: String,
+        targets: Set<String>,
+        command: String = COMMAND_PERIODICAL_CAPTURE
+    ): List<String> {
         if (targets.isEmpty()) {
-            logInfo(COMMAND_PERIODICAL_CAPTURE, "no files to save")
+            logInfo(command, "no files to save")
             return emptyList()
         }
         var currentIp = ip
@@ -273,28 +317,32 @@ class HeyCyanCommandService : Service() {
         targets.forEach { fileName ->
             val uri = runCatching { mediaSync.save(currentIp, fileName) }
                 .recoverCatching { firstError ->
-                    logWarn(COMMAND_PERIODICAL_CAPTURE, "save failed once file=$fileName; reconnecting P2P", firstError)
+                    logWarn(command, "save failed once file=$fileName; reconnecting P2P", firstError)
                     currentIp = resolveDeviceIp(null) ?: throw firstError
                     mediaSync.save(currentIp, fileName)
                 }
-                .onFailure { logWarn(COMMAND_PERIODICAL_CAPTURE, "save failed file=$fileName", it) }
+                .onFailure { logWarn(command, "save failed file=$fileName", it) }
                 .getOrNull()
 
             if (uri != null) {
                 savedFiles.add(fileName)
-                logInfo(COMMAND_PERIODICAL_CAPTURE, "saved file=$fileName uri=$uri")
+                logInfo(command, "saved file=$fileName uri=$uri")
             }
         }
-        logInfo(COMMAND_PERIODICAL_CAPTURE, "save summary saved=${savedFiles.size}")
+        logInfo(command, "save summary saved=${savedFiles.size}")
         return savedFiles
     }
 
-    private suspend fun saveTargets(ip: String, targets: Set<String>) {
+    private suspend fun saveTargets(
+        ip: String,
+        targets: Set<String>,
+        command: String = COMMAND_PERIODICAL_CAPTURE
+    ) {
         if (targets.isEmpty()) {
-            logInfo(COMMAND_PERIODICAL_CAPTURE, "no files to save")
+            logInfo(command, "no files to save")
             return
         }
-        val savedFiles = saveOnly(ip, targets)
+        val savedFiles = saveOnly(ip, targets, command)
         var deleted = 0
         var deletePending = 0
 
@@ -307,18 +355,18 @@ class HeyCyanCommandService : Service() {
                 .onSuccess { deleteOk ->
                     if (deleteOk) {
                         deleted++
-                        logInfo(COMMAND_PERIODICAL_CAPTURE, "deleted remote file=$fileName")
+                        logInfo(command, "deleted remote file=$fileName")
                     } else {
                         deletePending++
-                        logWarn(COMMAND_PERIODICAL_CAPTURE, "delete response timed out file=$fileName; next sync will verify")
+                        logWarn(command, "delete response timed out file=$fileName; next sync will verify")
                     }
                 }
                 .onFailure {
                     deletePending++
-                    logWarn(COMMAND_PERIODICAL_CAPTURE, "delete failed file=$fileName", it)
+                    logWarn(command, "delete failed file=$fileName", it)
                 }
         }
-        logInfo(COMMAND_PERIODICAL_CAPTURE, "sync summary saved=${savedFiles.size} deleted=$deleted deletePending=$deletePending")
+        logInfo(command, "sync summary saved=${savedFiles.size} deleted=$deleted deletePending=$deletePending")
     }
 
     private suspend fun resetTransferForDelete() {
@@ -529,8 +577,11 @@ class HeyCyanCommandService : Service() {
         const val ACTION_COMMAND = "com.sdk.glassessdksample.COMMAND"
         const val EXTRA_COMMAND = "command"
         const val EXTRA_SECONDS = "seconds"
+        const val ACTION_MEDIA_SYNC_PROGRESS = "com.sdk.glassessdksample.MEDIA_SYNC_PROGRESS"
+        const val EXTRA_PROGRESS_LINE = "progress_line"
         const val COMMAND_PERIODICAL_CAPTURE = "periodical_capture"
         const val COMMAND_PERIODICAL_CAPTURE_STOP = "periodical_capture_stop"
+        const val COMMAND_SYNC_MEDIA_ALL = "sync_media_all"
         private const val NOTIFICATION_CHANNEL_ID = "heycyan_periodical_capture"
         private const val NOTIFICATION_ID = 1001
         private const val PREFS_NAME = "heycyan_command"

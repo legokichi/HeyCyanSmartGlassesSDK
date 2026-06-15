@@ -3,21 +3,22 @@ package com.sdk.glassessdksample
 import android.Manifest
 import android.app.Activity
 import android.bluetooth.BluetoothAdapter
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
-import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.hjq.permissions.OnPermissionCallback
 import com.hjq.permissions.XXPermissions
 import com.oudmon.ble.base.bluetooth.BleOperateManager
 import com.oudmon.ble.base.bluetooth.DeviceManager
 import com.oudmon.ble.base.communication.LargeDataHandler
-import com.oudmon.ble.base.communication.bigData.resp.GlassesDeviceNotifyListener
-import com.oudmon.ble.base.communication.bigData.resp.GlassesDeviceNotifyRsp
 import com.sdk.glassessdksample.databinding.AcitivytMainBinding
 import com.sdk.glassessdksample.ui.BluetoothUtils
 import com.sdk.glassessdksample.ui.DeviceBindActivity
@@ -42,18 +43,25 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.ArrayDeque
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
-import com.sdk.glassessdksample.ui.PairingTargetStore
 
 private const val DEVICE_INFO_BATTERY_CALLBACK = "device_info_panel"
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: AcitivytMainBinding
-    private val deviceNotifyListener by lazy { MyDeviceNotifyListener() }
     private var deviceInfoVersionsText = "--"
     private var deviceInfoBatteryText = "--"
     private var deviceInfoVolumeText = "--"
+    private var deviceInfoMediaCountText = "--"
+    private val mediaSyncLogLines = ArrayDeque<String>()
+    private val mediaSyncProgressReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val line = intent.getStringExtra(HeyCyanCommandService.EXTRA_PROGRESS_LINE) ?: return
+            appendMediaSyncLog(line)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -61,6 +69,20 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         initView()
     }
+
+    override fun onStart() {
+        super.onStart()
+        LocalBroadcastManager.getInstance(this).registerReceiver(
+            mediaSyncProgressReceiver,
+            IntentFilter(HeyCyanCommandService.ACTION_MEDIA_SYNC_PROGRESS)
+        )
+    }
+
+    override fun onStop() {
+        LocalBroadcastManager.getInstance(this).unregisterReceiver(mediaSyncProgressReceiver)
+        super.onStop()
+    }
+
     inner class PermissionCallback : OnPermissionCallback {
         override fun onGranted(permissions: MutableList<String>, all: Boolean) {
             if (!all) {
@@ -126,17 +148,10 @@ class MainActivity : AppCompatActivity() {
         setOnClickListener(
             binding.btnScan,
             binding.btnDisconnect,
-            binding.btnAddListener,
-            binding.btnSetTime,
-            binding.btnVersion,
             binding.btnCamera,
             binding.btnVideo,
             binding.btnRecord,
             binding.btnThumbnail,
-            binding.btnBt,
-            binding.btnBattery,
-            binding.btnVolume,
-            binding.btnMediaCount,
             binding.btnDataDownload,
             binding.btnRefreshDeviceInfo,
             binding.btnPeriodicalCaptureStart,
@@ -150,19 +165,6 @@ class MainActivity : AppCompatActivity() {
                 binding.btnDisconnect -> {
                     BleOperateManager.getInstance().unBindDevice()
                     resetDeviceInfoPanel()
-                }
-
-                binding.btnAddListener -> {
-                    LargeDataHandler.getInstance().addOutDeviceListener(100, deviceNotifyListener)
-                }
-
-                binding.btnSetTime -> {
-                    Log.i("setTime", "setTime"+BleOperateManager.getInstance().isConnected)
-                    LargeDataHandler.getInstance().syncTime { _, _ -> }
-                }
-
-                binding.btnVersion -> {
-                    requestDeviceVersions()
                 }
 
                 binding.btnCamera -> {
@@ -310,27 +312,6 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                binding.btnBt -> {
-                    startClassicBluetoothPairing()
-                }
-                binding.btnBattery -> {
-                    requestDeviceBattery()
-                }
-                binding.btnVolume ->{
-                    requestDeviceVolume()
-                }
-                binding.btnMediaCount ->{
-                    LargeDataHandler.getInstance().glassesControl(byteArrayOf(0x02, 0x04)) { _, it ->
-                        if (it.dataType == 4) {
-                            val mediaCount = it.imageCount + it.videoCount + it.recordCount
-                            if (mediaCount > 0) {
-                                //眼镜有多少个媒体没有上传
-                            } else {
-                                //无
-                            }
-                        }
-                    }
-                }
                 binding.btnDataDownload -> {
                     // 检查并请求必要的权限
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -338,8 +319,7 @@ class MainActivity : AppCompatActivity() {
                         requestNearbyWifiDevicesPermission(this@MainActivity, object : OnPermissionCallback {
                             override fun onGranted(permissions: MutableList<String>, all: Boolean) {
                                 if (all) {
-                                    // 启动BLE+WiFi P2P数据下载
-                                    startDataDownload()
+                                    startMediaSyncAllFromUi()
                                 }
                             }
 
@@ -352,7 +332,7 @@ class MainActivity : AppCompatActivity() {
                         })
                     } else {
                         // Android 12 及以下版本直接启动下载
-                        startDataDownload()
+                        startMediaSyncAllFromUi()
                     }
                 }
                 binding.btnRefreshDeviceInfo -> {
@@ -372,6 +352,7 @@ class MainActivity : AppCompatActivity() {
         deviceInfoVersionsText = "--"
         deviceInfoBatteryText = "--"
         deviceInfoVolumeText = "--"
+        deviceInfoMediaCountText = "--"
         renderDeviceInfoPanel()
     }
 
@@ -383,10 +364,13 @@ class MainActivity : AppCompatActivity() {
         deviceInfoVersionsText = "Loading..."
         deviceInfoBatteryText = "Loading..."
         deviceInfoVolumeText = "Loading..."
+        deviceInfoMediaCountText = "Loading..."
         renderDeviceInfoPanel()
         requestDeviceVersions()
         requestDeviceBattery()
         requestDeviceVolume()
+        requestDeviceMediaCount()
+        requestDeviceTimeSync()
     }
 
     private fun requestDeviceVersions() {
@@ -441,6 +425,33 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun requestDeviceMediaCount() {
+        if (!BleOperateManager.getInstance().isConnected) {
+            renderDeviceInfoPanel()
+            return
+        }
+        LargeDataHandler.getInstance().glassesControl(byteArrayOf(0x02, 0x04)) { _, response ->
+            if (response.dataType == 4) {
+                val mediaCount = response.imageCount + response.videoCount + response.recordCount
+                deviceInfoMediaCountText = listOf(
+                    "Total: $mediaCount",
+                    "Images: ${response.imageCount}",
+                    "Videos: ${response.videoCount}",
+                    "Audio: ${response.recordCount}"
+                ).joinToString("\n")
+                runOnUiThread { renderDeviceInfoPanel() }
+            }
+        }
+    }
+
+    private fun requestDeviceTimeSync() {
+        if (!BleOperateManager.getInstance().isConnected) {
+            renderDeviceInfoPanel()
+            return
+        }
+        LargeDataHandler.getInstance().syncTime { _, _ -> }
+    }
+
     private fun renderDeviceInfoPanel() {
         val connected = BleOperateManager.getInstance().isConnected
         val ready = BleOperateManager.getInstance().isReady
@@ -462,7 +473,10 @@ class MainActivity : AppCompatActivity() {
                 deviceInfoBatteryText,
                 "",
                 "Volume:",
-                deviceInfoVolumeText
+                deviceInfoVolumeText,
+                "",
+                "Undownloaded media:",
+                deviceInfoMediaCountText
             ).joinToString("\n")
         }
     }
@@ -497,22 +511,23 @@ class MainActivity : AppCompatActivity() {
         startService(intent)
     }
 
-    private fun startClassicBluetoothPairing() {
-        if (!BleOperateManager.getInstance().isConnected) {
-            Toast.makeText(this, "Connect glasses over BLE first", Toast.LENGTH_SHORT).show()
-            return
+    private fun startMediaSyncAllFromUi() {
+        clearMediaSyncLog()
+        appendMediaSyncLog("Starting media sync")
+        sendCommandService(HeyCyanCommandService.COMMAND_SYNC_MEDIA_ALL)
+    }
+
+    private fun clearMediaSyncLog() {
+        mediaSyncLogLines.clear()
+        binding.textMediaSyncLogBody.text = ""
+    }
+
+    private fun appendMediaSyncLog(line: String) {
+        mediaSyncLogLines.addLast(line)
+        while (mediaSyncLogLines.size > 80) {
+            mediaSyncLogLines.removeFirst()
         }
-        LargeDataHandler.getInstance().syncClassicBluetooth { _, response ->
-            if (response != null) {
-                PairingTargetStore.save(this, response.btAddress, response.btName)
-                Log.i("BT_PAIR", "Pairing target: ${response.btName} ${response.btAddress}")
-            } else {
-                PairingTargetStore.clear(this)
-                Log.w("BT_PAIR", "No Classic BT info; discovery will not pair unknown devices")
-            }
-            BleOperateManager.getInstance().classicBluetoothStartScan()
-            Toast.makeText(this, "Classic Bluetooth scan started", Toast.LENGTH_SHORT).show()
-        }
+        binding.textMediaSyncLogBody.text = mediaSyncLogLines.joinToString("\n")
     }
 
     private fun startDataDownload() {
@@ -904,101 +919,6 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.e("DataDownload", "Connection test failed: ${e.message}", e)
             return false
-        }
-    }
-
-    inner class MyDeviceNotifyListener : GlassesDeviceNotifyListener() {
-
-        @RequiresApi(Build.VERSION_CODES.O)
-        override fun parseData(cmdType: Int, response: GlassesDeviceNotifyRsp) {
-            when (response.loadData[6].toInt()) {
-                //眼镜电量上报
-                0x05 -> {
-                    //当前电量
-                    val battery = response.loadData[7].toInt()
-                    //是否在充电
-                    val changing = response.loadData[8].toInt()
-                }
-                //眼镜通过快捷识别
-                0x02 -> {
-                    if (response.loadData.size > 9 && response.loadData[9].toInt() == 0x02) {
-                        //要设置识别意图：eg 请帮我看看眼前是什么，图片中的内容
-                    }
-                    //获取图片缩略图
-                    LargeDataHandler.getInstance().getPictureThumbnails { cmdType, success, data ->
-                        //请将data存入路径,jpg的图片
-                    }
-                }
-
-                0x03 -> {
-                    if (response.loadData[7].toInt() == 1) {
-                        //眼镜启动麦克风开始说话
-                    }
-                }
-                //ota 升级
-                0x04 -> {
-                    try {
-                        val download = response.loadData[7].toInt()
-                        val soc = response.loadData[8].toInt()
-                        val nor = response.loadData[9].toInt()
-                        //download 固件下载进度 soc 下载进度 nor 升级进度
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
-                }
-
-                0x0c -> {
-                    //眼镜触发暂停事件，语音播报
-                    if (response.loadData[7].toInt() == 1) {
-                        //to do
-                    }
-                }
-
-                0x0d -> {
-                    //解除APP绑定事件
-                    if (response.loadData[7].toInt() == 1) {
-                        //to do
-                    }
-                }
-                //眼镜内存不足事件
-                0x0e -> {
-
-                }
-                //翻译暂停事件
-                0x10 -> {
-
-                }
-                //眼镜音量变化事件
-                0x12 -> {
-                    //音乐音量
-                    //最小音量
-                    response.loadData[8].toInt()
-                    //最大音量
-                    response.loadData[9].toInt()
-                    //当前音量
-                    response.loadData[10].toInt()
-
-                    //来电音量
-                    //最小音量
-                    response.loadData[12].toInt()
-                    //最大音量
-                    response.loadData[13].toInt()
-                    //当前音量
-                    response.loadData[14].toInt()
-
-                    //眼镜系统音量
-                    //最小音量
-                    response.loadData[16].toInt()
-                    //最大音量
-                    response.loadData[17].toInt()
-                    //当前音量
-                    response.loadData[18].toInt()
-
-                    //当前的音量模式
-                    response.loadData[19].toInt()
-
-                }
-            }
         }
     }
 }

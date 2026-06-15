@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import android.webkit.MimeTypeMap
 import com.oudmon.ble.base.communication.file.FileHandle
 import com.oudmon.ble.base.communication.file.SimpleCallback
 import kotlinx.coroutines.CompletableDeferred
@@ -28,7 +29,12 @@ class GlassMediaSync(private val context: Context) {
 
     suspend fun fetchJpgNames(baseIp: String): Set<String> = withContext(Dispatchers.IO) {
         val body = getText("http://$baseIp/files/media.config")
-        parseJpgNames(body)
+        parseFileNames(body).filterTo(linkedSetOf()) { it.isImageFile() }
+    }
+
+    suspend fun fetchFileNames(baseIp: String): Set<String> = withContext(Dispatchers.IO) {
+        val body = getText("http://$baseIp/files/media.config")
+        parseFileNames(body)
     }
 
     suspend fun saveAndDelete(baseIp: String, fileName: String): SyncResult = withContext(Dispatchers.IO) {
@@ -50,7 +56,7 @@ class GlassMediaSync(private val context: Context) {
 
         try {
             downloadToFile(fileUrl, tempFile)
-            saveToGallery(tempFile, galleryDisplayName(fileName))
+            saveToGallery(tempFile, mediaDisplayName(fileName), fileName.mediaKind())
         } finally {
             tempFile.delete()
         }
@@ -68,12 +74,15 @@ class GlassMediaSync(private val context: Context) {
         }
     }
 
-    private fun parseJpgNames(body: String): Set<String> {
+    private fun parseFileNames(body: String): Set<String> {
         val names = linkedSetOf<String>()
-        val regex = Regex("""[A-Za-z0-9_./\\-]+\.jpe?g""", RegexOption.IGNORE_CASE)
+        val regex = Regex("""[A-Za-z0-9_./\\-]+\.[A-Za-z0-9]{1,8}""")
         body.lineSequence().forEach { line ->
             regex.findAll(line).forEach { match ->
-                names.add(match.value.replace('\\', '/').trimStart('/'))
+                val name = match.value.replace('\\', '/').trimStart('/')
+                if (!name.equals("media.config", ignoreCase = true)) {
+                    names.add(name)
+                }
             }
         }
         return names
@@ -97,32 +106,33 @@ class GlassMediaSync(private val context: Context) {
         }
     }
 
-    private fun saveToGallery(source: File, displayName: String): Uri {
+    private fun saveToGallery(source: File, displayName: String, kind: MediaKind): Uri {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            saveToGalleryModern(source, displayName)
+            saveToGalleryModern(source, displayName, kind)
         } else {
-            saveToGalleryLegacy(source, displayName)
+            saveToGalleryLegacy(source, displayName, kind)
         }
     }
 
-    private fun galleryDisplayName(remoteFileName: String): String {
+    private fun mediaDisplayName(remoteFileName: String): String {
+        val extension = remoteFileName.substringAfterLast('.', "").lowercase(Locale.US)
         val baseName = remoteFileName.substringAfterLast('/').substringBeforeLast('.')
         val timestamp = Regex("""(\d{8})(\d{6})""").find(baseName)?.let { match ->
             "${match.groupValues[1]}T${match.groupValues[2]}"
         } ?: SimpleDateFormat("yyyyMMdd'T'HHmmss", Locale.US).format(Date())
-        return "$timestamp.jpg"
+        return if (extension.isBlank()) timestamp else "$timestamp.$extension"
     }
 
-    private fun saveToGalleryModern(source: File, displayName: String): Uri {
+    private fun saveToGalleryModern(source: File, displayName: String, kind: MediaKind): Uri {
         val resolver = context.contentResolver
         val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
-            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/HeyCyan")
+            put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+            put(MediaStore.MediaColumns.MIME_TYPE, displayName.mimeType())
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "${kind.relativePath}/HeyCyan")
             put(MediaStore.Images.Media.IS_PENDING, 1)
         }
 
-        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+        val uri = resolver.insert(kind.contentUri(), values)
             ?: throw IOException("Failed to create MediaStore row for $displayName")
         try {
             resolver.openOutputStream(uri)?.use { output ->
@@ -140,9 +150,9 @@ class GlassMediaSync(private val context: Context) {
         }
     }
 
-    private fun saveToGalleryLegacy(source: File, displayName: String): Uri {
+    private fun saveToGalleryLegacy(source: File, displayName: String, kind: MediaKind): Uri {
         val dir = File(
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+            Environment.getExternalStoragePublicDirectory(kind.legacyDirectory),
             "HeyCyan"
         ).apply { mkdirs() }
         val destination = uniqueFile(dir, displayName)
@@ -150,7 +160,7 @@ class GlassMediaSync(private val context: Context) {
         MediaScannerConnection.scanFile(
             context,
             arrayOf(destination.absolutePath),
-            arrayOf("image/jpeg"),
+            arrayOf(displayName.mimeType()),
             null
         )
         return Uri.fromFile(destination)
@@ -204,6 +214,61 @@ class GlassMediaSync(private val context: Context) {
             .joinToString("/") { segment ->
                 URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
             }
+    }
+
+    private fun String.isImageFile(): Boolean = mediaKind() == MediaKind.IMAGE
+
+    private fun String.mediaKind(): MediaKind {
+        return when (substringAfterLast('.', "").lowercase(Locale.US)) {
+            "jpg", "jpeg", "png", "webp", "heic", "heif" -> MediaKind.IMAGE
+            "mp4", "mov", "3gp", "m4v", "avi", "mkv" -> MediaKind.VIDEO
+            "mp3", "wav", "aac", "m4a", "amr", "ogg", "opus" -> MediaKind.AUDIO
+            else -> MediaKind.DOWNLOAD
+        }
+    }
+
+    private fun String.mimeType(): String {
+        val extension = substringAfterLast('.', "").lowercase(Locale.US)
+        return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+            ?: when (extension) {
+                "heic" -> "image/heic"
+                "heif" -> "image/heif"
+                "m4a" -> "audio/mp4"
+                "amr" -> "audio/amr"
+                "opus" -> "audio/opus"
+                else -> "application/octet-stream"
+            }
+    }
+
+    private enum class MediaKind(
+        val relativePath: String,
+        val legacyDirectory: String
+    ) {
+        IMAGE(
+            Environment.DIRECTORY_PICTURES,
+            Environment.DIRECTORY_PICTURES
+        ),
+        VIDEO(
+            Environment.DIRECTORY_MOVIES,
+            Environment.DIRECTORY_MOVIES
+        ),
+        AUDIO(
+            Environment.DIRECTORY_MUSIC,
+            Environment.DIRECTORY_MUSIC
+        ),
+        DOWNLOAD(
+            Environment.DIRECTORY_DOWNLOADS,
+            Environment.DIRECTORY_DOWNLOADS
+        );
+
+        fun contentUri(): Uri {
+            return when (this) {
+                IMAGE -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                VIDEO -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                AUDIO -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                DOWNLOAD -> MediaStore.Downloads.EXTERNAL_CONTENT_URI
+            }
+        }
     }
 
     sealed class SyncResult {

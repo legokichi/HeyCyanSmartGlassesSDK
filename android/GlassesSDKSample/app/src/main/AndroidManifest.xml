@@ -67,12 +67,7 @@
         <activity android:name=".ui.DeviceBindActivity" />
         <service
             android:name=".ui.HeyCyanCommandService"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="com.sdk.glassessdksample.COMMAND" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-        </service>
+            android:exported="false" />
 
     </application>
 

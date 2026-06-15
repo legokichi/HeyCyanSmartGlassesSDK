@@ -24,6 +24,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -43,6 +44,7 @@ class HeyCyanCommandService : Service() {
     private var transferIp: CompletableDeferred<String>? = null
     private var transferP2pConnected: CompletableDeferred<Unit>? = null
     private var transferNotifyRegistered = false
+    private var loopJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -50,9 +52,29 @@ class HeyCyanCommandService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        commandIntent = intent
         val command = intent?.getStringExtra(EXTRA_COMMAND).orEmpty().ifBlank { COMMAND_STATUS }
         HeyCyanLogger.info(this, command, "service command received")
+
+        if (command == COMMAND_LOOP3) {
+            startLoopJob(intent)
+            return START_STICKY
+        }
+
+        if (command == COMMAND_LOOP3_STOP) {
+            stopLoop3(command)
+            loopJob?.cancel()
+            if (loopJob?.isActive != true) {
+                stopSelf(startId)
+            }
+            return START_NOT_STICKY
+        }
+
+        if (loopJob?.isActive == true) {
+            HeyCyanLogger.warn(this, command, "command ignored while loop3 is running")
+            return START_STICKY
+        }
+
+        commandIntent = intent
         acquireWakeLock()
         scope.launch {
             try {
@@ -61,7 +83,9 @@ class HeyCyanCommandService : Service() {
                 releaseWakeLock()
                 unregisterTransferNotifyListener()
                 unregisterP2pReceiver()
-                stopSelf(startId)
+                if (loopJob?.isActive != true) {
+                    stopSelf(startId)
+                }
             }
         }
         return START_NOT_STICKY
@@ -75,6 +99,26 @@ class HeyCyanCommandService : Service() {
         unregisterTransferNotifyListener()
         unregisterP2pReceiver()
         super.onDestroy()
+    }
+
+    private fun startLoopJob(intent: Intent?) {
+        if (loopJob?.isActive == true) {
+            HeyCyanLogger.warn(this, COMMAND_LOOP3, "loop3 already running")
+            return
+        }
+        commandIntent = intent
+        acquireWakeLock()
+        loopJob = scope.launch {
+            try {
+                runCommand(COMMAND_LOOP3)
+            } finally {
+                releaseWakeLock()
+                unregisterTransferNotifyListener()
+                unregisterP2pReceiver()
+                loopJob = null
+                stopSelf()
+            }
+        }
     }
 
     private suspend fun runCommand(command: String) {

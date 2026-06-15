@@ -19,6 +19,9 @@ import okhttp3.Request
 import java.io.File
 import java.io.IOException
 import java.net.URLEncoder
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class GlassMediaSync(private val context: Context) {
     private val client = OkHttpClient()
@@ -47,7 +50,7 @@ class GlassMediaSync(private val context: Context) {
 
         try {
             downloadToFile(fileUrl, tempFile)
-            saveToGallery(tempFile, fileName.substringAfterLast('/'))
+            saveToGallery(tempFile, galleryDisplayName(fileName))
         } finally {
             tempFile.delete()
         }
@@ -100,6 +103,14 @@ class GlassMediaSync(private val context: Context) {
         } else {
             saveToGalleryLegacy(source, displayName)
         }
+    }
+
+    private fun galleryDisplayName(remoteFileName: String): String {
+        val baseName = remoteFileName.substringAfterLast('/').substringBeforeLast('.')
+        val timestamp = Regex("""(\d{8})(\d{6})""").find(baseName)?.let { match ->
+            "${match.groupValues[1]}T${match.groupValues[2]}"
+        } ?: SimpleDateFormat("yyyyMMdd'T'HHmmss", Locale.US).format(Date())
+        return "$timestamp.jpg"
     }
 
     private fun saveToGalleryModern(source: File, displayName: String): Uri {

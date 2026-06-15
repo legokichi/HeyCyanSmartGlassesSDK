@@ -95,6 +95,10 @@ class GlassMediaSync(private val context: Context) {
             }
             tokenRegex.findAll(line).forEach { match ->
                 val name = match.value.replace('\\', '/').trimStart('/')
+                // Alternative-HeyCyan-App-and-SDK treats each manifest line as the raw HTTP path.
+                // Keep extensionless media names unchanged for /files/<name>, and infer extensions
+                // only when saving to MediaStore.
+                // https://github.com/legokichi/Alternative-HeyCyan-App-and-SDK/blob/main/android/CyanBridge/app/src/main/java/com/fersaiyan/cyanbridge/MainActivity.kt
                 if (name.isExtensionlessVideoName() || name.isExtensionlessAudioName()) {
                     names.add(name)
                 }
@@ -213,7 +217,7 @@ class GlassMediaSync(private val context: Context) {
             handle.initRegister()
             handle.registerCallback(callback)
             handle.executeFileDelete(fileName.substringAfterLast('/'))
-            withTimeoutOrNull(15000L) { result.await() } ?: false
+            withTimeoutOrNull(5000L) { result.await() } ?: false
         } catch (e: Exception) {
             Log.w(TAG, "BLE delete threw: $fileName", e)
             false

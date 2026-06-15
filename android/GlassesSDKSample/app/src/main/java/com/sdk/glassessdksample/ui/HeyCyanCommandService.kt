@@ -358,6 +358,10 @@ class HeyCyanCommandService : Service() {
         var deleted = 0
         var deletePending = 0
 
+        if (savedFiles.isNotEmpty()) {
+            prepareRemoteDelete(command)
+        }
+
         savedFiles.forEach { fileName ->
             logInfo(command, "deleting remote file=$fileName")
             runCatching { mediaSync.delete(fileName) }
@@ -376,6 +380,34 @@ class HeyCyanCommandService : Service() {
                 }
         }
         logInfo(command, "sync summary saved=${savedFiles.size} deleted=$deleted deletePending=$deletePending")
+    }
+
+    private suspend fun prepareRemoteDelete(command: String) {
+        logInfo(command, "leaving transfer mode before remote delete")
+        // Alternative-HeyCyan-App-and-SDK closes the download session with glassesControl[0x02,0x01,0x09]
+        // before cleaning up P2P. Deleting while the glasses are still in transfer mode causes this
+        // device to emit P2P/Wi-Fi error=255 and never return FileHandle's delete callback.
+        // https://github.com/legokichi/Alternative-HeyCyan-App-and-SDK/blob/main/android/CyanBridge/app/src/main/java/com/fersaiyan/cyanbridge/MainActivity.kt
+        val exitTransfer = glassesControl(byteArrayOf(0x02, 0x01, 0x09))
+        logInfo(
+            command,
+            "exit transfer response type=${exitTransfer?.dataType} error=${exitTransfer?.errorCode}"
+        )
+        unregisterTransferNotifyListener()
+        unregisterP2pReceiver()
+        val manager = WifiP2pManagerSingleton.getInstance(applicationContext)
+        manager.cancelP2pConnection()
+        val removedGroup = withTimeoutOrNull(5000L) {
+            suspendCancellableCoroutine { continuation ->
+                manager.removeGroup { success ->
+                    if (continuation.isActive) {
+                        continuation.resume(success)
+                    }
+                }
+            }
+        } ?: false
+        logInfo(command, "p2p group removed before delete=$removedGroup")
+        delay(2000L)
     }
 
     private suspend fun resetTransferForDelete() {

@@ -67,7 +67,8 @@
         <activity android:name=".ui.DeviceBindActivity" />
         <service
             android:name=".ui.HeyCyanCommandService"
-            android:exported="false" />
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
 
     </application>
 

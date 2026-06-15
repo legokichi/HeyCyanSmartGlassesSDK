@@ -1,6 +1,7 @@
 package com.sdk.glassessdksample.ui.wifi.p2p
 
 import android.content.Context
+import android.content.BroadcastReceiver
 import android.content.IntentFilter
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pDevice
@@ -15,6 +16,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 class WifiP2pManagerSingleton private constructor(private val context: Context) {
     
     companion object {
+        private const val TAG = "WifiP2pManagerSingleton"
+
         @Volatile
         private var instance: WifiP2pManagerSingleton? = null
         
@@ -39,7 +42,7 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
     private val intentFilter = IntentFilter().apply {
         addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION)
         addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
-        addAction(WifiP2pManager.WIFI_P2P_CONNECTION_STATE_CHANGE_ACTION)
+        addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
         addAction(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION)
     }
     
@@ -187,7 +190,7 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
             wifiP2pManager.requestConnectionInfo(channel, object : WifiP2pManager.ConnectionInfoListener {
                 override fun onConnectionInfoAvailable(info: WifiP2pInfo) {
                     Log.d(TAG, "Connection info available: groupFormed=${info.groupFormed}, isGroupOwner=${info.isGroupOwner}")
-                    onConnectionInfoAvailable(info)
+                    this@WifiP2pManagerSingleton.onConnectionInfoAvailable(info)
                 }
             })
         }
@@ -305,9 +308,5 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
         fun cancelConnect()
         fun cancelConnectFail(reason: Int)
         fun retryAlsoFailed()
-    }
-    
-    companion object {
-        private const val TAG = "WifiP2pManagerSingleton"
     }
 } 

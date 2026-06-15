@@ -46,6 +46,8 @@ class MyApplication : Application(){
         BleOperateManager.getInstance().setApplication(this)
         BleOperateManager.getInstance().init()
         val deviceFilter: IntentFilter = BleAction.getDeviceIntentFilter()
+        deviceFilter.addAction(BluetoothDevice.ACTION_FOUND)
+        deviceFilter.addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
         val deviceReceiver = BluetoothReceiver()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             registerReceiver(deviceReceiver, deviceFilter, RECEIVER_EXPORTED)

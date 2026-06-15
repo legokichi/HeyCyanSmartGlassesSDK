@@ -32,6 +32,7 @@ import com.sdk.glassessdksample.ui.P2PController
 import com.sdk.glassessdksample.ui.wifi.p2p.WifiP2pManagerSingleton
 import android.net.wifi.p2p.WifiP2pDevice
 import android.net.wifi.p2p.WifiP2pInfo
+import android.widget.Toast
 import org.greenrobot.eventbus.EventBus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +43,9 @@ import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
+import androidx.core.content.ContextCompat
+import com.sdk.glassessdksample.ui.MinutePhotoService
+import com.sdk.glassessdksample.ui.PairingTargetStore
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: AcitivytMainBinding
@@ -129,7 +133,9 @@ class MainActivity : AppCompatActivity() {
             binding.btnBattery,
             binding.btnVolume,
             binding.btnMediaCount,
-            binding.btnDataDownload
+            binding.btnDataDownload,
+            binding.btnMinutePhotoStart,
+            binding.btnMinutePhotoStop
         ) {
             when (this) {
                 binding.btnScan -> {
@@ -315,9 +321,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 binding.btnBt -> {
-                    //BT扫描
-                    BleOperateManager.getInstance().classicBluetoothStartScan()
-
+                    startClassicBluetoothPairing()
                 }
                 binding.btnBattery -> {
                     //添加电量监听
@@ -384,8 +388,90 @@ class MainActivity : AppCompatActivity() {
                         startDataDownload()
                     }
                 }
+                binding.btnMinutePhotoStart -> {
+                    startMinutePhotosWithPermissions()
+                }
+                binding.btnMinutePhotoStop -> {
+                    stopMinutePhotos()
+                }
             }
         }
+    }
+
+    private fun startClassicBluetoothPairing() {
+        if (!BleOperateManager.getInstance().isConnected) {
+            Toast.makeText(this, "Connect glasses over BLE first", Toast.LENGTH_SHORT).show()
+            return
+        }
+        LargeDataHandler.getInstance().syncClassicBluetooth { _, response ->
+            if (response != null) {
+                PairingTargetStore.save(this, response.btAddress, response.btName)
+                Log.i("BT_PAIR", "Pairing target: ${response.btName} ${response.btAddress}")
+            } else {
+                PairingTargetStore.clear(this)
+                Log.w("BT_PAIR", "No Classic BT info; discovery will not pair unknown devices")
+            }
+            BleOperateManager.getInstance().classicBluetoothStartScan()
+            Toast.makeText(this, "Classic Bluetooth scan started", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun startMinutePhotosWithPermissions() {
+        Log.i("MinutePhotoButton", "Start requested. bleConnected=${BleOperateManager.getInstance().isConnected}")
+        if (!BleOperateManager.getInstance().isConnected) {
+            Log.w("MinutePhotoButton", "Start rejected: glasses are not connected over BLE")
+            Toast.makeText(this, "Connect glasses first", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val permissions = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            permissions.add(Manifest.permission.BLUETOOTH_SCAN)
+            permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
+            permissions.add(Manifest.permission.BLUETOOTH_ADVERTISE)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+            permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+        }
+        if (permissions.isEmpty() || XXPermissions.isGranted(this, permissions)) {
+            Log.i("MinutePhotoButton", "Permissions already granted; starting service")
+            startMinutePhotos()
+            return
+        }
+        Log.i("MinutePhotoButton", "Requesting permissions: $permissions")
+        XXPermissions.with(this)
+            .permission(permissions)
+            .request(object : OnPermissionCallback {
+                override fun onGranted(permissions: MutableList<String>, all: Boolean) {
+                    Log.i("MinutePhotoButton", "Permission result granted. all=$all permissions=$permissions")
+                    if (all) {
+                        startMinutePhotos()
+                    }
+                }
+
+                override fun onDenied(permissions: MutableList<String>, never: Boolean) {
+                    super.onDenied(permissions, never)
+                    Log.w("MinutePhotoButton", "Permission denied. never=$never permissions=$permissions")
+                    if (never) {
+                        XXPermissions.startPermissionActivity(this@MainActivity, permissions)
+                    }
+                }
+            })
+    }
+
+    private fun startMinutePhotos() {
+        Log.i("MinutePhotoButton", "Starting MinutePhotoService")
+        val intent = Intent(this, MinutePhotoService::class.java)
+            .setAction(MinutePhotoService.ACTION_START)
+        ContextCompat.startForegroundService(this, intent)
+        Toast.makeText(this, "Minute photo capture started", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun stopMinutePhotos() {
+        val intent = Intent(this, MinutePhotoService::class.java)
+            .setAction(MinutePhotoService.ACTION_STOP)
+        startService(intent)
+        Toast.makeText(this, "Minute photo capture stopped", Toast.LENGTH_SHORT).show()
     }
 
     private fun startDataDownload() {
@@ -449,7 +535,7 @@ class MainActivity : AppCompatActivity() {
                                     }
                                 } else {
                                     Log.e("DataDownload", "Failed to create P2P group")
-                                    withContext(Dispatchers.Main) {
+                                    CoroutineScope(Dispatchers.Main).launch {
                                         showDownloadError("Failed to create P2P group")
                                     }
                                 }
@@ -584,7 +670,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
     
-    private fun parseMediaList(content: String) {
+    private suspend fun parseMediaList(content: String) {
         // 解析媒体配置文件内容 - 这是一个包含JPG文件名的文本文件
         Log.i("DataDownload", "Parsing media list content...")
         

@@ -51,9 +51,14 @@ class BluetoothReceiver : BroadcastReceiver() {
                 val device =
                     intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
                 if (device != null) {
-                  //发现设备，当蓝牙地址和当前 BLE地址相等调用配对
-                    BleOperateManager.getInstance().createBondBluetoothJieLi(device)
+                    if (PairingTargetStore.matches(context, device.address, device.name)) {
+                        Log.i("qc", "Found target BT device, pairing: ${device.name} ${device.address}")
+                        BleOperateManager.getInstance().createBondBluetoothJieLi(device)
+                    }
                 }
+            }
+            BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
+                Log.i("qc", "Classic Bluetooth discovery finished")
             }
         }
     }

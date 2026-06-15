@@ -39,6 +39,14 @@ android {
     buildFeatures {
         viewBinding = true
     }
+
+    sourceSets {
+        main {
+            java {
+                exclude '**/ui/wifi/**/*.java'
+            }
+        }
+    }
 }
 
 

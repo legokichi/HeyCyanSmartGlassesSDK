@@ -346,11 +346,8 @@ class HeyCyanCommandService : Service() {
         var deleted = 0
         var deletePending = 0
 
-        if (savedFiles.isNotEmpty()) {
-            resetTransferForDelete()
-        }
-
         savedFiles.forEach { fileName ->
+            logInfo(command, "deleting remote file=$fileName")
             runCatching { mediaSync.delete(fileName) }
                 .onSuccess { deleteOk ->
                     if (deleteOk) {

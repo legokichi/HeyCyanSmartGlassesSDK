@@ -65,10 +65,18 @@
             </intent-filter>
         </activity>
         <activity android:name=".ui.DeviceBindActivity" />
-        <service
-            android:name=".ui.MinutePhotoService"
-            android:exported="false"
-            android:foregroundServiceType="connectedDevice" />
+        <activity
+            android:name=".ui.HeyCyanCommandActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:finishOnTaskLaunch="true"
+            android:noHistory="true"
+            android:theme="@style/Theme.GlassesSDKSample.Command">
+            <intent-filter>
+                <action android:name="com.sdk.glassessdksample.COMMAND" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
 
     </application>
 

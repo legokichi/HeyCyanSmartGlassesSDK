@@ -1,0 +1,131 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -euo pipefail
+
+ACTION="com.sdk.glassessdksample.COMMAND"
+COMPONENT="com.sdk.glassessdksample/.ui.HeyCyanCommandActivity"
+LOG_FILE="${HOME}/heycyan-loop.log"
+PID_FILE="${HOME}/.heycyan-loop.pid"
+
+run_command() {
+  local command="$1"
+  shift || true
+  am start -n "$COMPONENT" -a "$ACTION" --es command "$command" "$@" >/dev/null
+}
+
+usage() {
+  cat <<'USAGE'
+usage: heycyan <command>
+
+commands:
+  status                 Log BLE connection status
+  scan [seconds]         Scan BLE devices and log name/address/rssi
+  connect [address]      Connect to a BLE address; uses the app's known address if omitted
+  scan-connect [filter]  Scan, then connect to the strongest device; filter matches name
+  disconnect             Disconnect/unbind BLE
+  shot | capture         Take one photo on the glasses
+  sync                   Save all JPGs from the glasses, then delete saved files on the glasses
+  shot-sync              Take one photo, save the new JPG, then delete it on the glasses
+  loop [seconds]         Run shot-sync forever; default interval is 60 seconds
+  loop-count [seconds] [count]
+                         Run shot-sync count times; defaults are 60 seconds and 10 times
+  start-loop [seconds]   Run loop in the Termux background and store a PID
+  stop-loop              Stop the background loop started by start-loop
+  logs                   Follow app logs
+  log-file               Print the Termux loop log path
+USAGE
+}
+
+case "${1:-}" in
+  status)
+    run_command "status"
+    ;;
+  scan)
+    seconds="${2:-15}"
+    run_command "scan" --ei seconds "$seconds"
+    ;;
+  connect)
+    if [ "${2:-}" ]; then
+      run_command "connect" --es address "$2"
+    else
+      run_command "connect"
+    fi
+    ;;
+  scan-connect)
+    seconds="${3:-15}"
+    if [ "${2:-}" ]; then
+      run_command "scan_connect" --es name_contains "$2" --ei seconds "$seconds"
+    else
+      run_command "scan_connect" --ei seconds "$seconds"
+    fi
+    ;;
+  disconnect)
+    run_command "disconnect"
+    ;;
+  shot|capture)
+    run_command "capture"
+    ;;
+  sync)
+    run_command "sync"
+    ;;
+  shot-sync|capture-sync)
+    run_command "capture_sync"
+    ;;
+  loop)
+    interval="${2:-60}"
+    command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock || true
+    while true; do
+      printf '%s capture_sync\n' "$(date -Is)" | tee -a "$LOG_FILE"
+      run_command "capture_sync" 2>&1 | tee -a "$LOG_FILE" || true
+      sleep "$interval"
+    done
+    ;;
+  loop-count)
+    interval="${2:-60}"
+    count="${3:-10}"
+    command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock || true
+    for i in $(seq 1 "$count"); do
+      printf '%s capture_sync %s/%s\n' "$(date -Is)" "$i" "$count" | tee -a "$LOG_FILE"
+      run_command "capture_sync" 2>&1 | tee -a "$LOG_FILE" || true
+      sleep "$interval"
+    done
+    command -v termux-wake-unlock >/dev/null 2>&1 && termux-wake-unlock || true
+    ;;
+  start-loop)
+    interval="${2:-60}"
+    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+      echo "heycyan loop is already running: pid $(cat "$PID_FILE")"
+      exit 0
+    fi
+    nohup "$0" loop "$interval" >>"$LOG_FILE" 2>&1 &
+    echo "$!" > "$PID_FILE"
+    echo "started heycyan loop: pid $(cat "$PID_FILE"), interval ${interval}s"
+    ;;
+  stop-loop)
+    if [ ! -f "$PID_FILE" ]; then
+      echo "no heycyan loop pid file"
+      exit 0
+    fi
+    pid="$(cat "$PID_FILE")"
+    if kill "$pid" 2>/dev/null; then
+      echo "stopped heycyan loop: pid $pid"
+    else
+      echo "heycyan loop was not running: pid $pid"
+    fi
+    rm -f "$PID_FILE"
+    command -v termux-wake-unlock >/dev/null 2>&1 && termux-wake-unlock || true
+    ;;
+  logs)
+    logcat -s HeyCyanCmd GlassMediaSync AndroidRuntime
+    ;;
+  log-file)
+    echo "$LOG_FILE"
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "unknown command: $1" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

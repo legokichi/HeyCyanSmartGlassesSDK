@@ -43,8 +43,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
-import androidx.core.content.ContextCompat
-import com.sdk.glassessdksample.ui.MinutePhotoService
 import com.sdk.glassessdksample.ui.PairingTargetStore
 
 class MainActivity : AppCompatActivity() {
@@ -133,9 +131,7 @@ class MainActivity : AppCompatActivity() {
             binding.btnBattery,
             binding.btnVolume,
             binding.btnMediaCount,
-            binding.btnDataDownload,
-            binding.btnMinutePhotoStart,
-            binding.btnMinutePhotoStop
+            binding.btnDataDownload
         ) {
             when (this) {
                 binding.btnScan -> {
@@ -388,12 +384,6 @@ class MainActivity : AppCompatActivity() {
                         startDataDownload()
                     }
                 }
-                binding.btnMinutePhotoStart -> {
-                    startMinutePhotosWithPermissions()
-                }
-                binding.btnMinutePhotoStop -> {
-                    stopMinutePhotos()
-                }
             }
         }
     }
@@ -414,64 +404,6 @@ class MainActivity : AppCompatActivity() {
             BleOperateManager.getInstance().classicBluetoothStartScan()
             Toast.makeText(this, "Classic Bluetooth scan started", Toast.LENGTH_SHORT).show()
         }
-    }
-
-    private fun startMinutePhotosWithPermissions() {
-        Log.i("MinutePhotoButton", "Start requested. bleConnected=${BleOperateManager.getInstance().isConnected}")
-        if (!BleOperateManager.getInstance().isConnected) {
-            Log.w("MinutePhotoButton", "Start rejected: glasses are not connected over BLE")
-            Toast.makeText(this, "Connect glasses first", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val permissions = mutableListOf<String>()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            permissions.add(Manifest.permission.BLUETOOTH_SCAN)
-            permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
-            permissions.add(Manifest.permission.BLUETOOTH_ADVERTISE)
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
-            permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
-        }
-        if (permissions.isEmpty() || XXPermissions.isGranted(this, permissions)) {
-            Log.i("MinutePhotoButton", "Permissions already granted; starting service")
-            startMinutePhotos()
-            return
-        }
-        Log.i("MinutePhotoButton", "Requesting permissions: $permissions")
-        XXPermissions.with(this)
-            .permission(permissions)
-            .request(object : OnPermissionCallback {
-                override fun onGranted(permissions: MutableList<String>, all: Boolean) {
-                    Log.i("MinutePhotoButton", "Permission result granted. all=$all permissions=$permissions")
-                    if (all) {
-                        startMinutePhotos()
-                    }
-                }
-
-                override fun onDenied(permissions: MutableList<String>, never: Boolean) {
-                    super.onDenied(permissions, never)
-                    Log.w("MinutePhotoButton", "Permission denied. never=$never permissions=$permissions")
-                    if (never) {
-                        XXPermissions.startPermissionActivity(this@MainActivity, permissions)
-                    }
-                }
-            })
-    }
-
-    private fun startMinutePhotos() {
-        Log.i("MinutePhotoButton", "Starting MinutePhotoService")
-        val intent = Intent(this, MinutePhotoService::class.java)
-            .setAction(MinutePhotoService.ACTION_START)
-        ContextCompat.startForegroundService(this, intent)
-        Toast.makeText(this, "Minute photo capture started", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun stopMinutePhotos() {
-        val intent = Intent(this, MinutePhotoService::class.java)
-            .setAction(MinutePhotoService.ACTION_STOP)
-        startService(intent)
-        Toast.makeText(this, "Minute photo capture stopped", Toast.LENGTH_SHORT).show()
     }
 
     private fun startDataDownload() {

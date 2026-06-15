@@ -16,9 +16,4 @@
     <string name="text_13">Volume</string>
     <string name="text_14">Media Count</string>
     <string name="text_15">Download Media</string>
-    <string name="text_16">Start 1-Min Photos</string>
-    <string name="text_17">Stop 1-Min Photos</string>
-    <string name="minute_photo_channel_name">Minute photo capture</string>
-    <string name="minute_photo_notification_title">HeyCyan minute photos</string>
-    <string name="minute_photo_stop">Stop</string>
 </resources>

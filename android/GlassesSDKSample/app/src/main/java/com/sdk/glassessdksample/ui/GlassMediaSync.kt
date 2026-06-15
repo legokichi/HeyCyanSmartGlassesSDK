@@ -79,12 +79,19 @@ class GlassMediaSync(private val context: Context) {
 
     private fun parseFileNames(body: String): Set<String> {
         val names = linkedSetOf<String>()
-        val regex = Regex("""[A-Za-z0-9_./\\-]+\.[A-Za-z0-9]{1,8}""")
+        val extensionRegex = Regex("""[A-Za-z0-9_./\\-]+\.[A-Za-z0-9]{1,8}""")
+        val tokenRegex = Regex("""[A-Za-z0-9_./\\-]+""")
         body.lineSequence().forEach { line ->
-            regex.findAll(line).forEach { match ->
+            extensionRegex.findAll(line).forEach { match ->
                 val name = match.value.replace('\\', '/').trimStart('/')
                 if (!name.equals("media.config", ignoreCase = true)) {
                     names.add(name)
+                }
+            }
+            tokenRegex.findAll(line).forEach { match ->
+                val name = match.value.replace('\\', '/').trimStart('/')
+                if (name.startsWith("video-", ignoreCase = true) && !name.substringAfterLast('/').contains('.')) {
+                    names.add("$name.mp4")
                 }
             }
         }

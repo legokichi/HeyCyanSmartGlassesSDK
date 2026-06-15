@@ -125,7 +125,6 @@ class MainActivity : AppCompatActivity() {
     private fun initView() {
         setOnClickListener(
             binding.btnScan,
-            binding.btnConnect,
             binding.btnDisconnect,
             binding.btnAddListener,
             binding.btnSetTime,
@@ -146,14 +145,6 @@ class MainActivity : AppCompatActivity() {
             when (this) {
                 binding.btnScan -> {
                     requestLocationPermission(this@MainActivity, PermissionCallback())
-                }
-
-                binding.btnConnect -> {
-                    BleOperateManager.getInstance()
-                        .connectDirectly(DeviceManager.getInstance().deviceAddress)
-                    CoroutineScope(Dispatchers.Main).launch {
-                        waitForBleReadyThenRefresh()
-                    }
                 }
 
                 binding.btnDisconnect -> {
@@ -375,17 +366,6 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-    }
-
-    private suspend fun waitForBleReadyThenRefresh() {
-        repeat(20) {
-            if (BleOperateManager.getInstance().isConnected && BleOperateManager.getInstance().isReady) {
-                refreshDeviceInfoPanel()
-                return
-            }
-            delay(500L)
-        }
-        refreshDeviceInfoPanel()
     }
 
     private fun resetDeviceInfoPanel() {

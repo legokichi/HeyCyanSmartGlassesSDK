@@ -21,6 +21,7 @@ import com.oudmon.ble.base.communication.bigData.resp.GlassesDeviceNotifyRsp
 import com.sdk.glassessdksample.databinding.AcitivytMainBinding
 import com.sdk.glassessdksample.ui.BluetoothUtils
 import com.sdk.glassessdksample.ui.DeviceBindActivity
+import com.sdk.glassessdksample.ui.HeyCyanCommandService
 import com.sdk.glassessdksample.ui.hasBluetooth
 import com.sdk.glassessdksample.ui.requestAllPermission
 import com.sdk.glassessdksample.ui.requestBluetoothPermission
@@ -131,7 +132,9 @@ class MainActivity : AppCompatActivity() {
             binding.btnBattery,
             binding.btnVolume,
             binding.btnMediaCount,
-            binding.btnDataDownload
+            binding.btnDataDownload,
+            binding.btnLoop3Start,
+            binding.btnLoop3Stop
         ) {
             when (this) {
                 binding.btnScan -> {
@@ -384,8 +387,40 @@ class MainActivity : AppCompatActivity() {
                         startDataDownload()
                     }
                 }
+                binding.btnLoop3Start -> {
+                    startLoop3FromUi()
+                }
+                binding.btnLoop3Stop -> {
+                    stopLoop3FromUi()
+                }
             }
         }
+    }
+
+    private fun startLoop3FromUi() {
+        val seconds = binding.inputLoop3Interval.text
+            ?.toString()
+            ?.toIntOrNull()
+            ?.coerceIn(1, 86_400)
+            ?: 60
+        binding.inputLoop3Interval.setText(seconds.toString())
+        sendCommandService(HeyCyanCommandService.COMMAND_LOOP3) {
+            putExtra(HeyCyanCommandService.EXTRA_SECONDS, seconds)
+        }
+        Toast.makeText(this, getString(R.string.loop3_start_requested), Toast.LENGTH_SHORT).show()
+    }
+
+    private fun stopLoop3FromUi() {
+        sendCommandService(HeyCyanCommandService.COMMAND_LOOP3_STOP)
+        Toast.makeText(this, getString(R.string.loop3_stop_requested), Toast.LENGTH_SHORT).show()
+    }
+
+    private fun sendCommandService(command: String, configure: Intent.() -> Unit = {}) {
+        val intent = Intent(this, HeyCyanCommandService::class.java)
+            .setAction(HeyCyanCommandService.ACTION_COMMAND)
+            .putExtra(HeyCyanCommandService.EXTRA_COMMAND, command)
+        intent.configure()
+        startService(intent)
     }
 
     private fun startClassicBluetoothPairing() {

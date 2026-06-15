@@ -120,4 +120,55 @@
         android:layout_height="wrap_content"
         android:text="@string/text_15" />
 
+    <TextView
+        android:id="@+id/text_loop3_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/qc_dp_16"
+        android:layout_marginTop="@dimen/qc_dp_24"
+        android:layout_marginEnd="@dimen/qc_dp_16"
+        android:text="@string/loop3_title"
+        android:textStyle="bold" />
+
+    <LinearLayout
+        android:id="@+id/layout_loop3_controls"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/qc_dp_16"
+        android:layout_marginTop="@dimen/qc_dp_8"
+        android:layout_marginEnd="@dimen/qc_dp_16"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/text_loop3_interval_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/loop3_interval_label" />
+
+        <EditText
+            android:id="@+id/input_loop3_interval"
+            android:layout_width="@dimen/qc_dp_80"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/qc_dp_8"
+            android:autofillHints=""
+            android:inputType="number"
+            android:maxLines="1"
+            android:text="60" />
+
+        <Button
+            android:id="@+id/btn_loop3_start"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/qc_dp_8"
+            android:text="@string/loop3_start" />
+
+        <Button
+            android:id="@+id/btn_loop3_stop"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/qc_dp_8"
+            android:text="@string/loop3_stop" />
+    </LinearLayout>
+
 </LinearLayout>

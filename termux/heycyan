@@ -41,6 +41,33 @@ start_command() {
   fi
 }
 
+stop_loop3() {
+  start_command "loop3_stop" || true
+}
+
+run_loop3() {
+  local interval="${1:-60}"
+  touch "$DEVICE_LOG_FILE" 2>/dev/null || true
+  local start_line
+  start_line="$(wc -l < "$DEVICE_LOG_FILE" 2>/dev/null || echo 0)"
+  command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock || true
+  tail -n 0 -f "$DEVICE_LOG_FILE" 2>/dev/null | tee -a "$LOG_FILE" &
+  local log_pid="$!"
+  trap 'stop_loop3; kill "$log_pid" 2>/dev/null || true; wait "$log_pid" 2>/dev/null || true; command -v termux-wake-unlock >/dev/null 2>&1 && termux-wake-unlock || true; exit 130' INT TERM
+  start_command "loop3" --ei seconds "$interval"
+  while true; do
+    if tail -n +"$((start_line + 1))" "$DEVICE_LOG_FILE" 2>/dev/null \
+      | grep -F '"command":"loop3"' \
+      | grep -Eq '"message":"command (finished|failed|cancelled)"'; then
+      break
+    fi
+    sleep 2
+  done
+  kill "$log_pid" 2>/dev/null || true
+  wait "$log_pid" 2>/dev/null || true
+  command -v termux-wake-unlock >/dev/null 2>&1 && termux-wake-unlock || true
+}
+
 usage() {
   cat <<'USAGE'
 usage: heycyan <command>
@@ -61,6 +88,8 @@ commands:
   shot-sync              Take one photo, save the new JPG, then delete it on the glasses
   loop [seconds]         Run shot-sync forever; default interval is 60 seconds
   loop2 [seconds]        Run split shot/save/delete commands forever; default interval is 60 seconds
+  loop3 [seconds]        Start app-managed capture_sync loop; default interval is 60 seconds
+  stop-loop3             Stop the app-managed loop3
   loop-count [seconds] [count]
                          Run shot-sync count times; defaults are 60 seconds and 10 times
   start-loop [seconds]   Run loop in the Termux background and store a PID
@@ -159,6 +188,12 @@ case "${1:-}" in
       run_command "list_files" 70 || true
       sleep "$interval"
     done
+    ;;
+  loop3)
+    run_loop3 "${2:-60}"
+    ;;
+  stop-loop3)
+    stop_loop3
     ;;
   loop-count)
     interval="${2:-60}"

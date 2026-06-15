@@ -26,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -92,6 +93,8 @@ class HeyCyanCommandService : Service() {
                 COMMAND_RESET_P2P -> resetP2p(command)
                 COMMAND_SYNC -> syncAll(command)
                 COMMAND_CAPTURE_SYNC -> captureSync(command)
+                COMMAND_LOOP3 -> loop3(command)
+                COMMAND_LOOP3_STOP -> stopLoop3(command)
                 else -> HeyCyanLogger.warn(this, command, "unknown command")
             }
             HeyCyanLogger.info(this, command, "command finished")
@@ -276,6 +279,54 @@ class HeyCyanCommandService : Service() {
             ?: return
         HeyCyanLogger.info(this, command, "sync after capture count=${targets.size}")
         saveTargets(command, ip, targets)
+    }
+
+    private suspend fun loop3(command: String) {
+        val intervalSeconds = commandIntent?.getIntExtra(EXTRA_SECONDS, DEFAULT_LOOP_SECONDS)
+            ?.coerceIn(1, 24 * 60 * 60)
+            ?: DEFAULT_LOOP_SECONDS
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        if (prefs.getBoolean(PREF_LOOP3_RUNNING, false)) {
+            HeyCyanLogger.warn(this, command, "loop3 already running")
+            return
+        }
+        prefs.edit().putBoolean(PREF_LOOP3_RUNNING, true).apply()
+        HeyCyanLogger.info(this, command, "loop3 started intervalSeconds=$intervalSeconds")
+
+        var cycle = 0
+        try {
+            while (scope.isActive && prefs.getBoolean(PREF_LOOP3_RUNNING, false)) {
+                cycle++
+                val startedAt = System.currentTimeMillis()
+                HeyCyanLogger.info(this, command, "loop3 cycle started cycle=$cycle")
+                runCatching { captureSync(command) }
+                    .onFailure { HeyCyanLogger.warn(this, command, "loop3 cycle failed cycle=$cycle", it) }
+                HeyCyanLogger.info(this, command, "loop3 cycle finished cycle=$cycle")
+
+                val elapsed = System.currentTimeMillis() - startedAt
+                val waitMs = (intervalSeconds * 1000L - elapsed).coerceAtLeast(0L)
+                if (waitMs > 0L) {
+                    HeyCyanLogger.info(this, command, "loop3 sleeping millis=$waitMs")
+                    var remaining = waitMs
+                    while (remaining > 0L && scope.isActive && prefs.getBoolean(PREF_LOOP3_RUNNING, false)) {
+                        val step = remaining.coerceAtMost(1000L)
+                        delay(step)
+                        remaining -= step
+                    }
+                }
+            }
+        } finally {
+            prefs.edit().putBoolean(PREF_LOOP3_RUNNING, false).apply()
+            HeyCyanLogger.info(this, command, "loop3 stopped")
+        }
+    }
+
+    private fun stopLoop3(command: String) {
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .edit()
+            .putBoolean(PREF_LOOP3_RUNNING, false)
+            .apply()
+        HeyCyanLogger.info(this, command, "loop3 stop requested")
     }
 
     private suspend fun transferIp(command: String) {
@@ -677,6 +728,7 @@ class HeyCyanCommandService : Service() {
     }
 
     companion object {
+        const val ACTION_COMMAND = "com.sdk.glassessdksample.COMMAND"
         const val EXTRA_COMMAND = "command"
         const val EXTRA_ADDRESS = "address"
         const val EXTRA_NAME_CONTAINS = "name_contains"
@@ -696,10 +748,14 @@ class HeyCyanCommandService : Service() {
         const val COMMAND_RESET_P2P = "reset_p2p"
         const val COMMAND_SYNC = "sync"
         const val COMMAND_CAPTURE_SYNC = "capture_sync"
+        const val COMMAND_LOOP3 = "loop3"
+        const val COMMAND_LOOP3_STOP = "loop3_stop"
         private const val PREFS_NAME = "heycyan_command"
         private const val PREF_LAST_IP = "last_ip"
         private const val PREF_LAST_FILES = "last_files"
+        private const val PREF_LOOP3_RUNNING = "loop3_running"
         private const val DEFAULT_SCAN_SECONDS = 15
+        private const val DEFAULT_LOOP_SECONDS = 60
         private const val WAKE_LOCK_TIMEOUT_MS = 10 * 60 * 1000L
     }
 }

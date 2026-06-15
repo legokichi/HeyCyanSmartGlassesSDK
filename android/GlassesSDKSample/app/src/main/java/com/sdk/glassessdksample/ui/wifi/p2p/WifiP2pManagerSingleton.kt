@@ -11,6 +11,7 @@ import android.net.wifi.p2p.WifiP2pManager
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.oudmon.ble.base.communication.LargeDataHandler
 import java.util.concurrent.CopyOnWriteArrayList
 
 class WifiP2pManagerSingleton private constructor(private val context: Context) {
@@ -116,7 +117,7 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
         wifiP2pDevice = device
         val config = WifiP2pConfig().apply {
             deviceAddress = device.deviceAddress
-            groupOwnerIntent = 0
+            wps.setup = 0
         }
         
         connecting = true
@@ -156,8 +157,14 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
     }
     
     fun resetDeviceP2p() {
-        // Simplified for sample app - just log the action
-        Log.d(TAG, "resetDeviceP2p called")
+        Log.d(TAG, "resetDeviceP2p called - sending glassesControl[2,1,15]")
+        try {
+            LargeDataHandler.getInstance().glassesControl(byteArrayOf(0x02, 0x01, 0x0F)) { _, resp ->
+                Log.d(TAG, "resetDeviceP2p callback: type=${resp.dataType}, error=${resp.errorCode}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send resetDeviceP2p command", e)
+        }
     }
     
     fun resetFailCount() {

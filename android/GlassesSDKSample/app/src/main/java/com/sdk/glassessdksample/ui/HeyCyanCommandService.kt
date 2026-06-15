@@ -13,11 +13,14 @@ import com.oudmon.ble.base.bluetooth.BleOperateManager
 import com.oudmon.ble.base.bluetooth.DeviceManager
 import com.oudmon.ble.base.communication.LargeDataHandler
 import com.oudmon.ble.base.communication.bigData.resp.GlassModelControlResponse
+import com.oudmon.ble.base.communication.bigData.resp.GlassesDeviceNotifyListener
+import com.oudmon.ble.base.communication.bigData.resp.GlassesDeviceNotifyRsp
 import com.oudmon.ble.base.scan.BleScannerHelper
 import com.oudmon.ble.base.scan.ScanRecord
 import com.oudmon.ble.base.scan.ScanWrapperCallback
 import com.sdk.glassessdksample.ui.wifi.p2p.WifiP2pManagerSingleton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -35,6 +38,9 @@ class HeyCyanCommandService : Service() {
     private var p2pReceiver: android.content.BroadcastReceiver? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var commandIntent: Intent? = null
+    private var transferIp: CompletableDeferred<String>? = null
+    private var transferP2pConnected: CompletableDeferred<Unit>? = null
+    private var transferNotifyRegistered = false
 
     override fun onCreate() {
         super.onCreate()
@@ -51,6 +57,7 @@ class HeyCyanCommandService : Service() {
                 runCommand(command)
             } finally {
                 releaseWakeLock()
+                unregisterTransferNotifyListener()
                 unregisterP2pReceiver()
                 stopSelf(startId)
             }
@@ -63,6 +70,7 @@ class HeyCyanCommandService : Service() {
     override fun onDestroy() {
         scope.cancel()
         releaseWakeLock()
+        unregisterTransferNotifyListener()
         unregisterP2pReceiver()
         super.onDestroy()
     }
@@ -130,11 +138,15 @@ class HeyCyanCommandService : Service() {
         val targetAddress = commandIntent?.getStringExtra(EXTRA_ADDRESS)?.takeIf { it.isNotBlank() }
         val nameContains = commandIntent?.getStringExtra(EXTRA_NAME_CONTAINS)?.takeIf { it.isNotBlank() }
         val devices = scanBleDevices(command, seconds)
-        val target = devices.firstOrNull { device ->
-            targetAddress != null && device.deviceAddress.equals(targetAddress, ignoreCase = true)
-        } ?: devices.firstOrNull { device ->
-            nameContains != null && device.deviceName.contains(nameContains, ignoreCase = true)
-        } ?: devices.firstOrNull()
+        val target = when {
+            targetAddress != null -> devices.firstOrNull { device ->
+                device.deviceAddress.equals(targetAddress, ignoreCase = true)
+            }
+            nameContains != null -> devices.firstOrNull { device ->
+                device.deviceName.contains(nameContains, ignoreCase = true)
+            }
+            else -> devices.firstOrNull()
+        }
 
         val address = target?.deviceAddress
         if (address.isNullOrBlank()) {
@@ -320,15 +332,32 @@ class HeyCyanCommandService : Service() {
             HeyCyanLogger.info(this, "resolve_ip", "using preferred ip=$it")
             return it
         }
-        val p2pReady = ensureP2pGroup()
-        HeyCyanLogger.info(this, "resolve_ip", "p2pGroupReady=$p2pReady")
-        val mediaState = glassesControl(byteArrayOf(0x02, 0x04))
+        val ipWaiter = CompletableDeferred<String>()
+        transferIp = ipWaiter
+        transferP2pConnected = CompletableDeferred()
+        registerTransferNotifyListener()
+        ensureP2pDiscovery()
+
+        val transferState = glassesControl(byteArrayOf(0x02, 0x01, 0x04))
         HeyCyanLogger.info(
             this,
             "resolve_ip",
-            "media state type=${mediaState?.dataType} images=${mediaState?.imageCount} videos=${mediaState?.videoCount} records=${mediaState?.recordCount} p2pIp=${mediaState?.p2pIp} error=${mediaState?.errorCode}"
+            "transfer command type=${transferState?.dataType} images=${transferState?.imageCount} videos=${transferState?.videoCount} records=${transferState?.recordCount} p2pIp=${transferState?.p2pIp} error=${transferState?.errorCode}"
         )
-        return mediaState?.p2pIp?.takeIf { it.isNotBlank() && it != "0.0.0.0" }
+
+        transferState?.p2pIp?.takeIf { it.isNotBlank() && it != "0.0.0.0" }?.let {
+            HeyCyanLogger.info(this, "resolve_ip", "using transfer response ip=$it")
+            return it
+        }
+
+        val ip = withTimeoutOrNull(45000L) { ipWaiter.await() }
+        if (ip.isNullOrBlank()) {
+            HeyCyanLogger.warn(this, "resolve_ip", "NO_BLE_WIFI_IP_NOTIFY")
+            return null
+        }
+        withTimeoutOrNull(10000L) { transferP2pConnected?.await() }
+        HeyCyanLogger.info(this, "resolve_ip", "using notify ip=$ip")
+        return ip
     }
 
     private suspend fun glassesControl(command: ByteArray): GlassModelControlResponse? {
@@ -343,21 +372,26 @@ class HeyCyanCommandService : Service() {
         }
     }
 
-    private suspend fun ensureP2pGroup(): Boolean {
+    private suspend fun ensureP2pDiscovery() {
         val manager = WifiP2pManagerSingleton.getInstance(applicationContext)
         if (p2pReceiver == null) {
             p2pReceiver = manager.registerReceiver()
         }
         manager.addCallback(p2pCallback)
-        return withTimeoutOrNull(10000L) {
+        manager.resetFailCount()
+        val removedStaleGroup = withTimeoutOrNull(5000L) {
             suspendCancellableCoroutine { continuation ->
-                manager.createGroup { success ->
+                manager.removeGroup { success ->
                     if (continuation.isActive) {
                         continuation.resume(success)
                     }
                 }
             }
         } ?: false
+        HeyCyanLogger.info(this, "resolve_ip", "stale p2p group removed=$removedStaleGroup")
+        delay(1000L)
+        manager.startPeerDiscovery()
+        HeyCyanLogger.info(this, "resolve_ip", "p2p discovery started")
     }
 
     private fun unregisterP2pReceiver() {
@@ -365,6 +399,28 @@ class HeyCyanCommandService : Service() {
         manager.removeCallback(p2pCallback)
         p2pReceiver?.let { manager.unregisterReceiver(it) }
         p2pReceiver = null
+    }
+
+    private fun registerTransferNotifyListener() {
+        if (transferNotifyRegistered) return
+        runCatching {
+            LargeDataHandler.getInstance().addOutDeviceListener(2, transferNotifyListener)
+            transferNotifyRegistered = true
+            HeyCyanLogger.info(this, "resolve_ip", "registered transfer notify listener")
+        }.onFailure {
+            HeyCyanLogger.warn(this, "resolve_ip", "failed to register transfer notify listener", it)
+        }
+    }
+
+    private fun unregisterTransferNotifyListener() {
+        if (!transferNotifyRegistered) return
+        runCatching {
+            LargeDataHandler.getInstance().removeOutDeviceListener(2)
+            HeyCyanLogger.info(this, "resolve_ip", "unregistered transfer notify listener")
+        }.onFailure {
+            HeyCyanLogger.warn(this, "resolve_ip", "failed to unregister transfer notify listener", it)
+        }
+        transferNotifyRegistered = false
     }
 
     private fun acquireWakeLock() {
@@ -383,18 +439,80 @@ class HeyCyanCommandService : Service() {
     private val p2pCallback = object : WifiP2pManagerSingleton.WifiP2pCallback {
         override fun onWifiP2pEnabled() = Unit
         override fun onWifiP2pDisabled() = Unit
-        override fun onPeersChanged(peers: Collection<WifiP2pDevice>) = Unit
+        override fun onPeersChanged(peers: Collection<WifiP2pDevice>) {
+            HeyCyanLogger.info(this@HeyCyanCommandService, "resolve_ip", "p2p peers count=${peers.size}")
+            val target = peers.firstOrNull { peer ->
+                val name = peer.deviceName.orEmpty()
+                name.contains("Music", ignoreCase = true) ||
+                    name.contains("Cyan", ignoreCase = true) ||
+                    name.contains("Glass", ignoreCase = true)
+            } ?: peers.firstOrNull()
+            if (target != null) {
+                HeyCyanLogger.info(
+                    this@HeyCyanCommandService,
+                    "resolve_ip",
+                    "p2p connect target name=${target.deviceName} address=${target.deviceAddress}"
+                )
+                WifiP2pManagerSingleton.getInstance(applicationContext).connectToDevice(target)
+            }
+        }
         override fun onThisDeviceChanged(device: WifiP2pDevice) = Unit
-        override fun onConnected(info: WifiP2pInfo) = Unit
-        override fun onDisconnected() = Unit
+        override fun onConnected(info: WifiP2pInfo) {
+            HeyCyanLogger.info(
+                this@HeyCyanCommandService,
+                "resolve_ip",
+                "p2p connected groupFormed=${info.groupFormed} isGroupOwner=${info.isGroupOwner} groupOwnerIp=${info.groupOwnerAddress?.hostAddress}"
+            )
+            transferP2pConnected?.takeIf { !it.isCompleted }?.complete(Unit)
+        }
+        override fun onDisconnected() {
+            HeyCyanLogger.info(this@HeyCyanCommandService, "resolve_ip", "p2p disconnected")
+        }
         override fun onPeerDiscoveryStarted() = Unit
-        override fun onPeerDiscoveryFailed(reason: Int) = Unit
-        override fun onConnectRequestSent() = Unit
-        override fun onConnectRequestFailed(reason: Int) = Unit
-        override fun connecting() = Unit
-        override fun cancelConnect() = Unit
-        override fun cancelConnectFail(reason: Int) = Unit
-        override fun retryAlsoFailed() = Unit
+        override fun onPeerDiscoveryFailed(reason: Int) {
+            HeyCyanLogger.warn(this@HeyCyanCommandService, "resolve_ip", "p2p discovery failed reason=$reason")
+        }
+        override fun onConnectRequestSent() {
+            HeyCyanLogger.info(this@HeyCyanCommandService, "resolve_ip", "p2p connect request sent")
+        }
+        override fun onConnectRequestFailed(reason: Int) {
+            HeyCyanLogger.warn(this@HeyCyanCommandService, "resolve_ip", "p2p connect request failed reason=$reason")
+        }
+        override fun connecting() {
+            HeyCyanLogger.info(this@HeyCyanCommandService, "resolve_ip", "p2p already connecting")
+        }
+        override fun cancelConnect() {
+            HeyCyanLogger.info(this@HeyCyanCommandService, "resolve_ip", "p2p cancel connect")
+        }
+        override fun cancelConnectFail(reason: Int) {
+            HeyCyanLogger.warn(this@HeyCyanCommandService, "resolve_ip", "p2p cancel connect failed reason=$reason")
+        }
+        override fun retryAlsoFailed() {
+            HeyCyanLogger.warn(this@HeyCyanCommandService, "resolve_ip", "p2p retry also failed")
+        }
+    }
+
+    private val transferNotifyListener = object : GlassesDeviceNotifyListener() {
+        override fun parseData(cmdType: Int, response: GlassesDeviceNotifyRsp) {
+            val load = response.loadData
+            if (load.size < 7) return
+            when (load[6].toInt() and 0xFF) {
+                0x08 -> {
+                    if (load.size >= 11) {
+                        val ip = "${load[7].toInt() and 0xFF}.${load[8].toInt() and 0xFF}.${load[9].toInt() and 0xFF}.${load[10].toInt() and 0xFF}"
+                        HeyCyanLogger.info(this@HeyCyanCommandService, "resolve_ip", "BLE reported WiFi IP: $ip")
+                        transferIp?.takeIf { !it.isCompleted }?.complete(ip)
+                    }
+                }
+                0x09 -> {
+                    val error = load.getOrNull(7)?.toInt()?.and(0xFF)
+                    HeyCyanLogger.warn(this@HeyCyanCommandService, "resolve_ip", "P2P/WiFi notify error=$error")
+                    if (error == 255) {
+                        WifiP2pManagerSingleton.getInstance(applicationContext).resetDeviceP2p()
+                    }
+                }
+            }
+        }
     }
 
     companion object {

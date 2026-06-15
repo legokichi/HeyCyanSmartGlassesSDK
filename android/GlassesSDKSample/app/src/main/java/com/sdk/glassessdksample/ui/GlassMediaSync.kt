@@ -8,8 +8,12 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import com.oudmon.ble.base.communication.file.FileHandle
+import com.oudmon.ble.base.communication.file.SimpleCallback
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
@@ -34,7 +38,7 @@ class GlassMediaSync(private val context: Context) {
         try {
             downloadToFile(fileUrl, tempFile)
             val galleryUri = saveToGallery(tempFile, fileName.substringAfterLast('/'))
-            val deleteOk = deleteRemote(baseIp, fileName)
+            val deleteOk = deleteRemote(fileName)
             if (deleteOk) {
                 SyncResult.SavedAndDeleted(fileName, galleryUri)
             } else {
@@ -148,20 +152,30 @@ class GlassMediaSync(private val context: Context) {
         return candidate
     }
 
-    private fun deleteRemote(baseIp: String, fileName: String): Boolean {
-        val url = "http://$baseIp/files/${fileName.encodePath()}"
-        val request = Request.Builder().url(url).delete().build()
-        return try {
-            client.newCall(request).execute().use { response ->
-                val ok = response.isSuccessful || response.code == 404
-                if (!ok) {
-                    Log.w(TAG, "DELETE $url failed: ${response.code}")
-                }
-                ok
+    private suspend fun deleteRemote(fileName: String): Boolean {
+        val result = CompletableDeferred<Boolean>()
+        val callback = object : SimpleCallback() {
+            override fun onDeletePlate() {
+                Log.i(TAG, "BLE delete succeeded: $fileName")
+                result.complete(true)
             }
+
+            override fun onDeletePlateError(code: Int) {
+                Log.w(TAG, "BLE delete failed: $fileName code=$code")
+                result.complete(false)
+            }
+        }
+
+        val handle = FileHandle.getInstance()
+        return try {
+            handle.registerCallback(callback)
+            handle.executeFileDelete(fileName.substringAfterLast('/'))
+            withTimeoutOrNull(10000L) { result.await() } ?: false
         } catch (e: Exception) {
-            Log.w(TAG, "DELETE $url failed", e)
+            Log.w(TAG, "BLE delete threw: $fileName", e)
             false
+        } finally {
+            runCatching { handle.removeCallback(callback) }
         }
     }
 

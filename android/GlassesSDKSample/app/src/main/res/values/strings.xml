@@ -16,6 +16,9 @@
     <string name="text_13">Volume</string>
     <string name="text_14">Media Count</string>
     <string name="text_15">Download Media</string>
+    <string name="device_info_title">Device info</string>
+    <string name="device_info_refresh">Refresh device info</string>
+    <string name="device_info_placeholder">Connect glasses over BLE to load device information.</string>
     <string name="periodical_capture_title">Periodical capture</string>
     <string name="periodical_capture_interval_label">Interval seconds</string>
     <string name="periodical_capture_start">Start</string>

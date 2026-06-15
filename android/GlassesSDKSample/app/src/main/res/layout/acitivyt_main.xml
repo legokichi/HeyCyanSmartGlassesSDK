@@ -127,6 +127,34 @@
             android:text="@string/text_15" />
 
         <TextView
+            android:id="@+id/text_device_info_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/qc_dp_16"
+            android:layout_marginTop="@dimen/qc_dp_24"
+            android:layout_marginEnd="@dimen/qc_dp_16"
+            android:text="@string/device_info_title"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/text_device_info_body"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/qc_dp_16"
+            android:layout_marginTop="@dimen/qc_dp_8"
+            android:layout_marginEnd="@dimen/qc_dp_16"
+            android:text="@string/device_info_placeholder"
+            android:textIsSelectable="true" />
+
+        <Button
+            android:id="@+id/btn_refresh_device_info"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/qc_dp_16"
+            android:layout_marginTop="@dimen/qc_dp_8"
+            android:text="@string/device_info_refresh" />
+
+        <TextView
             android:id="@+id/text_periodical_capture_title"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

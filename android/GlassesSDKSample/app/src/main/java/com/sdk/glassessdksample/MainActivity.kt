@@ -46,9 +46,14 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import com.sdk.glassessdksample.ui.PairingTargetStore
 
+private const val DEVICE_INFO_BATTERY_CALLBACK = "device_info_panel"
+
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: AcitivytMainBinding
     private val deviceNotifyListener by lazy { MyDeviceNotifyListener() }
+    private var deviceInfoVersionsText = "--"
+    private var deviceInfoBatteryText = "--"
+    private var deviceInfoVolumeText = "--"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -98,6 +103,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         requestAllPermission(this, OnPermissionCallback { permissions, all ->  })
+        refreshDeviceInfoPanel()
     }
 
     inner class BluetoothPermissionCallback : OnPermissionCallback {
@@ -133,6 +139,7 @@ class MainActivity : AppCompatActivity() {
             binding.btnVolume,
             binding.btnMediaCount,
             binding.btnDataDownload,
+            binding.btnRefreshDeviceInfo,
             binding.btnPeriodicalCaptureStart,
             binding.btnPeriodicalCaptureStop
         ) {
@@ -144,10 +151,14 @@ class MainActivity : AppCompatActivity() {
                 binding.btnConnect -> {
                     BleOperateManager.getInstance()
                         .connectDirectly(DeviceManager.getInstance().deviceAddress)
+                    CoroutineScope(Dispatchers.Main).launch {
+                        waitForBleReadyThenRefresh()
+                    }
                 }
 
                 binding.btnDisconnect -> {
                     BleOperateManager.getInstance().unBindDevice()
+                    resetDeviceInfoPanel()
                 }
 
                 binding.btnAddListener -> {
@@ -160,18 +171,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 binding.btnVersion -> {
-                    LargeDataHandler.getInstance().syncDeviceInfo { _, response ->
-                        if (response != null) {
-                            //wifi 固件版本
-                             response.wifiFirmwareVersion
-                            //wifi 产品版本
-                            response.wifiHardwareVersion
-                            //蓝牙产品版本
-                             response.hardwareVersion
-                            //蓝牙固件版本
-                             response.firmwareVersion
-                        }
-                    }
+                    requestDeviceVersions()
                 }
 
                 binding.btnCamera -> {
@@ -323,33 +323,10 @@ class MainActivity : AppCompatActivity() {
                     startClassicBluetoothPairing()
                 }
                 binding.btnBattery -> {
-                    //添加电量监听
-                    LargeDataHandler.getInstance().addBatteryCallBack("init") { _, response ->
-
-                    }
-                    //电量
-                    LargeDataHandler.getInstance().syncBattery()
+                    requestDeviceBattery()
                 }
                 binding.btnVolume ->{
-                    //读取音量控制
-                    LargeDataHandler.getInstance().getVolumeControl { _, response ->
-                        if (response != null) {
-                            //眼镜音量 音乐最小值 最大值 当前值
-                            response.minVolumeMusic
-                            response.maxVolumeMusic
-                            response.currVolumeMusic
-                            //眼镜电话 电话最小值 最大值 当前值
-                            response.minVolumeCall
-                            response.maxVolumeCall
-                            response.currVolumeCall
-                            //眼镜系统 系统最小值 最大值 当前值
-                            response.minVolumeSystem
-                            response.maxVolumeSystem
-                            response.currVolumeSystem
-                            //眼镜当前的模式
-                            response.currVolumeType
-                        }
-                    }
+                    requestDeviceVolume()
                 }
                 binding.btnMediaCount ->{
                     LargeDataHandler.getInstance().glassesControl(byteArrayOf(0x02, 0x04)) { _, it ->
@@ -387,6 +364,9 @@ class MainActivity : AppCompatActivity() {
                         startDataDownload()
                     }
                 }
+                binding.btnRefreshDeviceInfo -> {
+                    refreshDeviceInfoPanel()
+                }
                 binding.btnPeriodicalCaptureStart -> {
                     startPeriodicalCaptureFromUi()
                 }
@@ -395,6 +375,120 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private suspend fun waitForBleReadyThenRefresh() {
+        repeat(20) {
+            if (BleOperateManager.getInstance().isConnected && BleOperateManager.getInstance().isReady) {
+                refreshDeviceInfoPanel()
+                return
+            }
+            delay(500L)
+        }
+        refreshDeviceInfoPanel()
+    }
+
+    private fun resetDeviceInfoPanel() {
+        deviceInfoVersionsText = "--"
+        deviceInfoBatteryText = "--"
+        deviceInfoVolumeText = "--"
+        renderDeviceInfoPanel()
+    }
+
+    private fun refreshDeviceInfoPanel() {
+        renderDeviceInfoPanel()
+        if (!BleOperateManager.getInstance().isConnected) {
+            return
+        }
+        deviceInfoVersionsText = "Loading..."
+        deviceInfoBatteryText = "Loading..."
+        deviceInfoVolumeText = "Loading..."
+        renderDeviceInfoPanel()
+        requestDeviceVersions()
+        requestDeviceBattery()
+        requestDeviceVolume()
+    }
+
+    private fun requestDeviceVersions() {
+        if (!BleOperateManager.getInstance().isConnected) {
+            renderDeviceInfoPanel()
+            return
+        }
+        LargeDataHandler.getInstance().syncDeviceInfo { _, response ->
+            if (response != null) {
+                deviceInfoVersionsText = listOf(
+                    "BLE firmware: ${response.firmwareVersion.orDash()}",
+                    "BLE hardware: ${response.hardwareVersion.orDash()}",
+                    "Wi-Fi firmware: ${response.wifiFirmwareVersion.orDash()}",
+                    "Wi-Fi hardware: ${response.wifiHardwareVersion.orDash()}"
+                ).joinToString("\n")
+                runOnUiThread { renderDeviceInfoPanel() }
+            }
+        }
+    }
+
+    private fun requestDeviceBattery() {
+        if (!BleOperateManager.getInstance().isConnected) {
+            renderDeviceInfoPanel()
+            return
+        }
+        LargeDataHandler.getInstance().removeBatteryCallBack(DEVICE_INFO_BATTERY_CALLBACK)
+        LargeDataHandler.getInstance().addBatteryCallBack(DEVICE_INFO_BATTERY_CALLBACK) { _, response ->
+            if (response != null) {
+                val charging = if (response.isCharging) "charging" else "not charging"
+                deviceInfoBatteryText = "${response.battery}% ($charging)"
+                runOnUiThread { renderDeviceInfoPanel() }
+            }
+        }
+        LargeDataHandler.getInstance().syncBattery()
+    }
+
+    private fun requestDeviceVolume() {
+        if (!BleOperateManager.getInstance().isConnected) {
+            renderDeviceInfoPanel()
+            return
+        }
+        LargeDataHandler.getInstance().getVolumeControl { _, response ->
+            if (response != null) {
+                deviceInfoVolumeText = listOf(
+                    "Current type: ${response.currVolumeType}",
+                    "Music: ${response.currVolumeMusic}/${response.maxVolumeMusic} (min ${response.minVolumeMusic})",
+                    "Call: ${response.currVolumeCall}/${response.maxVolumeCall} (min ${response.minVolumeCall})",
+                    "System: ${response.currVolumeSystem}/${response.maxVolumeSystem} (min ${response.minVolumeSystem})"
+                ).joinToString("\n")
+                runOnUiThread { renderDeviceInfoPanel() }
+            }
+        }
+    }
+
+    private fun renderDeviceInfoPanel() {
+        val connected = BleOperateManager.getInstance().isConnected
+        val ready = BleOperateManager.getInstance().isReady
+        val name = DeviceManager.getInstance().deviceName.orDash()
+        val address = DeviceManager.getInstance().deviceAddress.orDash()
+        binding.textDeviceInfoBody.text = if (!connected) {
+            getString(R.string.device_info_placeholder)
+        } else {
+            listOf(
+                "Name: $name",
+                "Address: $address",
+                "BLE connected: $connected",
+                "BLE ready: $ready",
+                "",
+                "Versions:",
+                deviceInfoVersionsText,
+                "",
+                "Battery:",
+                deviceInfoBatteryText,
+                "",
+                "Volume:",
+                deviceInfoVolumeText
+            ).joinToString("\n")
+        }
+    }
+
+    private fun String?.orDash(): String {
+        return takeUnless { it.isNullOrBlank() } ?: "--"
     }
 
     private fun startPeriodicalCaptureFromUi() {

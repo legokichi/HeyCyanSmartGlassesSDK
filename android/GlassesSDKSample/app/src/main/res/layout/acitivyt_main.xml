@@ -1,15 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
+    android:fillViewport="true"
     tools:ignore="MissingClass">
 
-    <HorizontalScrollView
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="@dimen/qc_dp_80">
+        android:orientation="vertical"
+        android:paddingBottom="@dimen/qc_dp_24">
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/qc_dp_80">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -40,11 +46,11 @@
                 android:text="@string/text_11" />
 
         </LinearLayout>
-    </HorizontalScrollView>
+        </HorizontalScrollView>
 
-    <HorizontalScrollView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content">
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -76,99 +82,114 @@
 
 
         </LinearLayout>
-    </HorizontalScrollView>
+        </HorizontalScrollView>
 
-    <Button
-        android:id="@+id/btn_record"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/text_8" />
+        <Button
+            android:id="@+id/btn_record"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/text_8" />
 
-    <Button
-        android:id="@+id/btn_thumbnail"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/text_9" />
+        <Button
+            android:id="@+id/btn_thumbnail"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/text_9" />
 
-    <Button
-        android:id="@+id/btn_bt"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/text_10" />
+        <Button
+            android:id="@+id/btn_bt"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/text_10" />
 
-    <Button
-        android:id="@+id/btn_battery"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/text_12" />
+        <Button
+            android:id="@+id/btn_battery"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/text_12" />
 
-    <Button
-        android:id="@+id/btn_volume"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/text_13" />
+        <Button
+            android:id="@+id/btn_volume"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/text_13" />
 
-    <Button
-        android:id="@+id/btn_media_count"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/text_14" />
+        <Button
+            android:id="@+id/btn_media_count"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/text_14" />
 
-    <Button
-        android:id="@+id/btn_data_download"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/text_15" />
-
-    <TextView
-        android:id="@+id/text_loop3_title"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="@dimen/qc_dp_16"
-        android:layout_marginTop="@dimen/qc_dp_24"
-        android:layout_marginEnd="@dimen/qc_dp_16"
-        android:text="@string/loop3_title"
-        android:textStyle="bold" />
-
-    <LinearLayout
-        android:id="@+id/layout_loop3_controls"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="@dimen/qc_dp_16"
-        android:layout_marginTop="@dimen/qc_dp_8"
-        android:layout_marginEnd="@dimen/qc_dp_16"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
+        <Button
+            android:id="@+id/btn_data_download"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/text_15" />
 
         <TextView
-            android:id="@+id/text_loop3_interval_label"
-            android:layout_width="wrap_content"
+            android:id="@+id/text_loop3_title"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/loop3_interval_label" />
+            android:layout_marginStart="@dimen/qc_dp_16"
+            android:layout_marginTop="@dimen/qc_dp_24"
+            android:layout_marginEnd="@dimen/qc_dp_16"
+            android:text="@string/loop3_title"
+            android:textStyle="bold" />
 
-        <EditText
-            android:id="@+id/input_loop3_interval"
-            android:layout_width="@dimen/qc_dp_80"
+        <LinearLayout
+            android:id="@+id/layout_loop3_controls"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="@dimen/qc_dp_8"
-            android:autofillHints=""
-            android:inputType="number"
-            android:maxLines="1"
-            android:text="60" />
+            android:layout_marginStart="@dimen/qc_dp_16"
+            android:layout_marginTop="@dimen/qc_dp_8"
+            android:layout_marginEnd="@dimen/qc_dp_16"
+            android:orientation="vertical">
 
-        <Button
-            android:id="@+id/btn_loop3_start"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="@dimen/qc_dp_8"
-            android:text="@string/loop3_start" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-        <Button
-            android:id="@+id/btn_loop3_stop"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="@dimen/qc_dp_8"
-            android:text="@string/loop3_stop" />
+                <TextView
+                    android:id="@+id/text_loop3_interval_label"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/loop3_interval_label" />
+
+                <EditText
+                    android:id="@+id/input_loop3_interval"
+                    android:layout_width="@dimen/qc_dp_80"
+                    android:layout_height="wrap_content"
+                    android:autofillHints=""
+                    android:inputType="number"
+                    android:maxLines="1"
+                    android:text="60" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/qc_dp_8"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btn_loop3_start"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/loop3_start" />
+
+                <Button
+                    android:id="@+id/btn_loop3_stop"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="@dimen/qc_dp_8"
+                    android:layout_weight="1"
+                    android:text="@string/loop3_stop" />
+            </LinearLayout>
+        </LinearLayout>
     </LinearLayout>
 
-</LinearLayout>
+</ScrollView>

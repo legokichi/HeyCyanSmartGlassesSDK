@@ -9,6 +9,7 @@ import android.net.wifi.p2p.WifiP2pDevice
 import android.net.wifi.p2p.WifiP2pInfo
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import com.oudmon.ble.base.bluetooth.BleOperateManager
 import com.oudmon.ble.base.bluetooth.DeviceManager
 import com.oudmon.ble.base.communication.LargeDataHandler
@@ -294,19 +295,24 @@ class HeyCyanCommandService : Service() {
         HeyCyanLogger.info(this, command, "loop3 started intervalSeconds=$intervalSeconds")
 
         var cycle = 0
+        val intervalMs = intervalSeconds * 1000L
         try {
             while (scope.isActive && prefs.getBoolean(PREF_LOOP3_RUNNING, false)) {
                 cycle++
-                val startedAt = System.currentTimeMillis()
+                val startedAt = SystemClock.elapsedRealtime()
                 HeyCyanLogger.info(this, command, "loop3 cycle started cycle=$cycle")
                 runCatching { captureSync(command) }
                     .onFailure { HeyCyanLogger.warn(this, command, "loop3 cycle failed cycle=$cycle", it) }
-                HeyCyanLogger.info(this, command, "loop3 cycle finished cycle=$cycle")
 
-                val elapsed = System.currentTimeMillis() - startedAt
-                val waitMs = (intervalSeconds * 1000L - elapsed).coerceAtLeast(0L)
+                val elapsedMs = SystemClock.elapsedRealtime() - startedAt
+                val waitMs = (intervalMs - elapsedMs).coerceAtLeast(0L)
+                val overrunMs = (elapsedMs - intervalMs).coerceAtLeast(0L)
+                HeyCyanLogger.info(
+                    this,
+                    command,
+                    "loop3 cycle finished cycle=$cycle elapsedMs=$elapsedMs waitMs=$waitMs overrunMs=$overrunMs"
+                )
                 if (waitMs > 0L) {
-                    HeyCyanLogger.info(this, command, "loop3 sleeping millis=$waitMs")
                     var remaining = waitMs
                     while (remaining > 0L && scope.isActive && prefs.getBoolean(PREF_LOOP3_RUNNING, false)) {
                         val step = remaining.coerceAtMost(1000L)

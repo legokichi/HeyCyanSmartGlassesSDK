@@ -246,11 +246,15 @@ class HeyCyanCommandService : Service() {
             ?: return
         logInfo(COMMAND_SYNC_MEDIA_ALL, "media.config raw=${mediaConfig.raw.toLogPreview()}")
         val targets = mediaConfig.fileNames
-        val mp4Targets = targets.filter { it.endsWith(".mp4", ignoreCase = true) }
-        if (mp4Targets.isEmpty()) {
-            logWarn(COMMAND_SYNC_MEDIA_ALL, "no mp4 filenames in media.config")
+        val videoTargets = targets.filter { it.isVideoCandidate() }
+        val audioTargets = targets.filter { it.isAudioCandidate() }
+        if (videoTargets.isEmpty()) {
+            logWarn(COMMAND_SYNC_MEDIA_ALL, "no video filenames in media.config")
         } else {
-            logInfo(COMMAND_SYNC_MEDIA_ALL, "mp4 filenames=${mp4Targets.joinToString(",")}")
+            logInfo(COMMAND_SYNC_MEDIA_ALL, "video filenames=${videoTargets.joinToString(",")}")
+        }
+        if (audioTargets.isNotEmpty()) {
+            logInfo(COMMAND_SYNC_MEDIA_ALL, "audio filenames=${audioTargets.joinToString(",")}")
         }
         logInfo(COMMAND_SYNC_MEDIA_ALL, "sync all media count=${targets.size}")
         saveTargets(ip, targets, COMMAND_SYNC_MEDIA_ALL)
@@ -442,6 +446,20 @@ class HeyCyanCommandService : Service() {
             .filter { it.isNotBlank() }
             .joinToString("|")
         return if (compact.length <= maxLength) compact else compact.take(maxLength) + "...(truncated)"
+    }
+
+    private fun String.isVideoCandidate(): Boolean {
+        val fileName = substringAfterLast('/')
+        return fileName.endsWith(".mp4", ignoreCase = true) ||
+            (!fileName.contains('.') && fileName.startsWith("video-", ignoreCase = true))
+    }
+
+    private fun String.isAudioCandidate(): Boolean {
+        val fileName = substringAfterLast('/')
+        return fileName.endsWith(".opus", ignoreCase = true) ||
+            fileName.endsWith(".ogg", ignoreCase = true) ||
+            (!fileName.contains('.') &&
+                (fileName.startsWith("record-", ignoreCase = true) || fileName.startsWith("audio-", ignoreCase = true)))
     }
 
     private suspend fun ensureP2pDiscovery() {

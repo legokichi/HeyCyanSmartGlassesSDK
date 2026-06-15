@@ -23,9 +23,14 @@ import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 class GlassMediaSync(private val context: Context) {
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(180, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .build()
 
     suspend fun fetchJpgNames(baseIp: String): Set<String> = withContext(Dispatchers.IO) {
         fetchMediaConfig(baseIp).fileNames.filterTo(linkedSetOf()) { it.isImageFile() }
@@ -90,8 +95,8 @@ class GlassMediaSync(private val context: Context) {
             }
             tokenRegex.findAll(line).forEach { match ->
                 val name = match.value.replace('\\', '/').trimStart('/')
-                if (name.startsWith("video-", ignoreCase = true) && !name.substringAfterLast('/').contains('.')) {
-                    names.add("$name.mp4")
+                if (name.isExtensionlessVideoName() || name.isExtensionlessAudioName()) {
+                    names.add(name)
                 }
             }
         }
@@ -125,7 +130,7 @@ class GlassMediaSync(private val context: Context) {
     }
 
     private fun mediaDisplayName(remoteFileName: String): String {
-        val extension = remoteFileName.substringAfterLast('.', "").lowercase(Locale.US)
+        val extension = remoteFileName.inferredExtension()
         val baseName = remoteFileName.substringAfterLast('/').substringBeforeLast('.')
         val timestamp = Regex("""(\d{8})(\d{6})""").find(baseName)?.let { match ->
             "${match.groupValues[1]}T${match.groupValues[2]}"
@@ -229,7 +234,7 @@ class GlassMediaSync(private val context: Context) {
     private fun String.isImageFile(): Boolean = mediaKind() == MediaKind.IMAGE
 
     private fun String.mediaKind(): MediaKind {
-        return when (substringAfterLast('.', "").lowercase(Locale.US)) {
+        return when (inferredExtension()) {
             "jpg", "jpeg", "png", "webp", "heic", "heif" -> MediaKind.IMAGE
             "mp4", "mov", "3gp", "m4v", "avi", "mkv" -> MediaKind.VIDEO
             "mp3", "wav", "aac", "m4a", "amr", "ogg", "opus" -> MediaKind.AUDIO
@@ -238,16 +243,37 @@ class GlassMediaSync(private val context: Context) {
     }
 
     private fun String.mimeType(): String {
-        val extension = substringAfterLast('.', "").lowercase(Locale.US)
+        val extension = inferredExtension()
         return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
             ?: when (extension) {
                 "heic" -> "image/heic"
                 "heif" -> "image/heif"
                 "m4a" -> "audio/mp4"
                 "amr" -> "audio/amr"
-                "opus" -> "audio/opus"
+                "opus" -> "audio/ogg"
                 else -> "application/octet-stream"
             }
+    }
+
+    private fun String.inferredExtension(): String {
+        val explicit = substringAfterLast('.', "").lowercase(Locale.US)
+        if (explicit.isNotBlank()) return explicit
+        return when {
+            isExtensionlessVideoName() -> "mp4"
+            isExtensionlessAudioName() -> "opus"
+            else -> ""
+        }
+    }
+
+    private fun String.isExtensionlessVideoName(): Boolean {
+        val fileName = substringAfterLast('/')
+        return !fileName.contains('.') && fileName.startsWith("video-", ignoreCase = true)
+    }
+
+    private fun String.isExtensionlessAudioName(): Boolean {
+        val fileName = substringAfterLast('/')
+        return !fileName.contains('.') &&
+            (fileName.startsWith("record-", ignoreCase = true) || fileName.startsWith("audio-", ignoreCase = true))
     }
 
     private enum class MediaKind(

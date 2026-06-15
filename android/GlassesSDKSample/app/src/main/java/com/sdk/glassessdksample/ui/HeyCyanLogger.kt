@@ -1,6 +1,9 @@
 package com.sdk.glassessdksample.ui
 
+import android.content.ContentValues
 import android.content.Context
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
 import java.io.File
 import java.text.SimpleDateFormat
@@ -44,6 +47,43 @@ object HeyCyanLogger {
             File(dir, "heycyan.log").appendText(line + "\n")
         }.onFailure {
             Log.w(TAG, "Failed to append file log", it)
+        }
+        runCatching {
+            appendPublicDownloadLog(context, line)
+        }.onFailure {
+            Log.w(TAG, "Failed to append public file log", it)
+        }
+    }
+
+    private fun appendPublicDownloadLog(context: Context, line: String) {
+        val resolver = context.contentResolver
+        val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+        val name = "heycyan_cmd_log.txt"
+        val relativePath = Environment.DIRECTORY_DOWNLOADS
+        val projection = arrayOf(MediaStore.Downloads._ID)
+        val selection = "${MediaStore.Downloads.DISPLAY_NAME}=? AND ${MediaStore.Downloads.RELATIVE_PATH}=?"
+        val args = arrayOf(name, "$relativePath/")
+
+        val existingUri = resolver.query(collection, projection, selection, args, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val id = cursor.getLong(0)
+                collection.buildUpon().appendPath(id.toString()).build()
+            } else {
+                null
+            }
+        }
+
+        val uri = existingUri ?: resolver.insert(
+            collection,
+            ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, name)
+                put(MediaStore.Downloads.MIME_TYPE, "text/plain")
+                put(MediaStore.Downloads.RELATIVE_PATH, relativePath)
+            }
+        ) ?: return
+
+        resolver.openOutputStream(uri, "wa")?.use { output ->
+            output.write((line + "\n").toByteArray(Charsets.UTF_8))
         }
     }
 

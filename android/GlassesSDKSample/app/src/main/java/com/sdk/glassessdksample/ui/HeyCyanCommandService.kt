@@ -85,6 +85,11 @@ class HeyCyanCommandService : Service() {
                 COMMAND_SCAN_CONNECT -> scanAndConnect(command)
                 COMMAND_DISCONNECT -> disconnectBle(command)
                 COMMAND_CAPTURE -> capture(command)
+                COMMAND_TRANSFER_IP -> transferIp(command)
+                COMMAND_LIST_FILES -> listFiles(command)
+                COMMAND_SAVE_FILES -> saveFiles(command)
+                COMMAND_DELETE_FILES -> deleteFiles(command)
+                COMMAND_RESET_P2P -> resetP2p(command)
                 COMMAND_SYNC -> syncAll(command)
                 COMMAND_CAPTURE_SYNC -> captureSync(command)
                 else -> HeyCyanLogger.warn(this, command, "unknown command")
@@ -261,7 +266,7 @@ class HeyCyanCommandService : Service() {
         val captureResponse = capture(command) ?: return
         delay(5000L)
 
-        val ip = resolveDeviceIp(captureResponse.p2pIp) ?: run {
+        val ip = resolveDeviceIp(captureResponse.p2pIp)?.also { rememberIp(it) } ?: run {
             HeyCyanLogger.warn(this, command, "NO_P2P_IP_AFTER_CAPTURE")
             return
         }
@@ -273,8 +278,72 @@ class HeyCyanCommandService : Service() {
         saveTargets(command, ip, targets)
     }
 
+    private suspend fun transferIp(command: String) {
+        val ip = resolveDeviceIp(commandIntent?.getStringExtra(EXTRA_IP)) ?: run {
+            HeyCyanLogger.warn(this, command, "NO_P2P_IP")
+            return
+        }
+        rememberIp(ip)
+        HeyCyanLogger.info(this, command, "transfer ip=$ip")
+    }
+
+    private suspend fun listFiles(command: String): Set<String> {
+        val names = fetchFileNames(command) ?: return emptySet()
+        HeyCyanLogger.info(this, command, "file count=${names.size}")
+        names.forEachIndexed { index, fileName ->
+            HeyCyanLogger.info(this, command, "file index=$index name=$fileName")
+        }
+        rememberFiles(names)
+        return names
+    }
+
+    private suspend fun saveFiles(command: String) {
+        val requestedFile = commandIntent?.getStringExtra(EXTRA_FILE)?.takeIf { it.isNotBlank() }
+        val targets = requestedFile?.let { setOf(it) } ?: fetchFileNames(command) ?: return
+        val ip = activeIp(command) ?: return
+        HeyCyanLogger.info(this, command, "save count=${targets.size}")
+        saveOnly(command, ip, targets)
+    }
+
+    private suspend fun deleteFiles(command: String) {
+        val requestedFile = commandIntent?.getStringExtra(EXTRA_FILE)?.takeIf { it.isNotBlank() }
+        val targets = requestedFile?.let { setOf(it) }
+            ?: fetchFileNames(command)
+            ?: rememberedFiles()
+        if (targets.isEmpty()) {
+            HeyCyanLogger.info(this, command, "no files to delete")
+            return
+        }
+
+        resetTransferForDelete(command)
+        var deleted = 0
+        var deletePending = 0
+        targets.forEach { fileName ->
+            runCatching { mediaSync.delete(fileName) }
+                .onSuccess { deleteOk ->
+                    if (deleteOk) {
+                        deleted++
+                        HeyCyanLogger.info(this, command, "deleted remote file=$fileName")
+                    } else {
+                        deletePending++
+                        HeyCyanLogger.warn(this, command, "delete response timed out file=$fileName; next list/sync will verify")
+                    }
+                }
+                .onFailure {
+                    deletePending++
+                    HeyCyanLogger.warn(this, command, "delete failed file=$fileName", it)
+                }
+        }
+        HeyCyanLogger.info(this, command, "delete summary deleted=$deleted deletePending=$deletePending")
+    }
+
+    private suspend fun resetP2p(command: String) {
+        resetTransferForDelete(command)
+        HeyCyanLogger.info(this, command, "p2p reset requested")
+    }
+
     private suspend fun syncAll(command: String) {
-        val ip = resolveDeviceIp(null) ?: run {
+        val ip = resolveDeviceIp(null)?.also { rememberIp(it) } ?: run {
             HeyCyanLogger.warn(this, command, "NO_P2P_IP")
             return
         }
@@ -286,50 +355,44 @@ class HeyCyanCommandService : Service() {
         saveTargets(command, ip, targets)
     }
 
-    private suspend fun saveTargets(command: String, ip: String, targets: Set<String>) {
+    private suspend fun saveOnly(command: String, ip: String, targets: Set<String>): List<String> {
         if (targets.isEmpty()) {
             HeyCyanLogger.info(this, command, "no files to save")
-            return
+            return emptyList()
         }
         var currentIp = ip
-        var saved = 0
-        var deleted = 0
-        var deletePending = 0
         val savedFiles = mutableListOf<String>()
 
         targets.forEach { fileName ->
             val uri = runCatching { mediaSync.save(currentIp, fileName) }
                 .recoverCatching { firstError ->
                     HeyCyanLogger.warn(this, command, "save failed once file=$fileName; reconnecting P2P", firstError)
-                    currentIp = resolveDeviceIp(null) ?: throw firstError
+                    currentIp = resolveDeviceIp(null)?.also { rememberIp(it) } ?: throw firstError
                     mediaSync.save(currentIp, fileName)
                 }
                 .onFailure { HeyCyanLogger.warn(this, command, "save failed file=$fileName", it) }
                 .getOrNull()
 
             if (uri != null) {
-                saved++
                 savedFiles.add(fileName)
                 HeyCyanLogger.info(this, command, "saved file=$fileName uri=$uri")
             }
         }
+        HeyCyanLogger.info(this, command, "save summary saved=${savedFiles.size}")
+        return savedFiles
+    }
+
+    private suspend fun saveTargets(command: String, ip: String, targets: Set<String>) {
+        if (targets.isEmpty()) {
+            HeyCyanLogger.info(this, command, "no files to save")
+            return
+        }
+        val savedFiles = saveOnly(command, ip, targets)
+        var deleted = 0
+        var deletePending = 0
 
         if (savedFiles.isNotEmpty()) {
-            HeyCyanLogger.info(this, command, "resetting P2P before remote delete")
-            unregisterTransferNotifyListener()
-            unregisterP2pReceiver()
-            val manager = WifiP2pManagerSingleton.getInstance(applicationContext)
-            manager.resetDeviceP2p()
-            withTimeoutOrNull(5000L) {
-                suspendCancellableCoroutine { continuation ->
-                    manager.removeGroup { success ->
-                        if (continuation.isActive) {
-                            continuation.resume(success)
-                        }
-                    }
-                }
-            }
-            delay(3000L)
+            resetTransferForDelete(command)
         }
 
         savedFiles.forEach { fileName ->
@@ -348,12 +411,57 @@ class HeyCyanCommandService : Service() {
                     HeyCyanLogger.warn(this, command, "delete failed file=$fileName", it)
                 }
         }
-        HeyCyanLogger.info(this, command, "sync summary saved=$saved deleted=$deleted deletePending=$deletePending")
+        HeyCyanLogger.info(this, command, "sync summary saved=${savedFiles.size} deleted=$deleted deletePending=$deletePending")
+    }
+
+    private suspend fun activeIp(command: String): String? {
+        commandIntent?.getStringExtra(EXTRA_IP)?.takeIf { it.isNotBlank() }?.let {
+            rememberIp(it)
+            return it
+        }
+        rememberedIp()?.let { return it }
+        return resolveDeviceIp(null)?.also { rememberIp(it) } ?: run {
+            HeyCyanLogger.warn(this, command, "NO_P2P_IP")
+            null
+        }
+    }
+
+    private suspend fun fetchFileNames(command: String): Set<String>? {
+        val firstIp = activeIp(command) ?: return null
+        val names = runCatching { mediaSync.fetchJpgNames(firstIp) }
+            .recoverCatching { firstError ->
+                HeyCyanLogger.warn(this, command, "media list fetch failed once ip=$firstIp; reconnecting P2P", firstError)
+                val retryIp = resolveDeviceIp(null)?.also { rememberIp(it) } ?: throw firstError
+                mediaSync.fetchJpgNames(retryIp)
+            }
+            .onFailure { HeyCyanLogger.warn(this, command, "media list fetch failed", it) }
+            .getOrNull()
+        names?.let { rememberFiles(it) }
+        return names
+    }
+
+    private suspend fun resetTransferForDelete(command: String) {
+        HeyCyanLogger.info(this, command, "resetting P2P before remote delete")
+        unregisterTransferNotifyListener()
+        unregisterP2pReceiver()
+        val manager = WifiP2pManagerSingleton.getInstance(applicationContext)
+        manager.resetDeviceP2p()
+        withTimeoutOrNull(5000L) {
+            suspendCancellableCoroutine { continuation ->
+                manager.removeGroup { success ->
+                    if (continuation.isActive) {
+                        continuation.resume(success)
+                    }
+                }
+            }
+        }
+        delay(3000L)
     }
 
     private suspend fun resolveDeviceIp(preferredIp: String?): String? {
         preferredIp?.takeIf { it.isNotBlank() && it != "0.0.0.0" }?.let {
             HeyCyanLogger.info(this, "resolve_ip", "using preferred ip=$it")
+            rememberIp(it)
             return it
         }
         val ipWaiter = CompletableDeferred<String>()
@@ -371,6 +479,7 @@ class HeyCyanCommandService : Service() {
 
         transferState?.p2pIp?.takeIf { it.isNotBlank() && it != "0.0.0.0" }?.let {
             HeyCyanLogger.info(this, "resolve_ip", "using transfer response ip=$it")
+            rememberIp(it)
             return it
         }
 
@@ -381,7 +490,35 @@ class HeyCyanCommandService : Service() {
         }
         withTimeoutOrNull(10000L) { transferP2pConnected?.await() }
         HeyCyanLogger.info(this, "resolve_ip", "using notify ip=$ip")
+        rememberIp(ip)
         return ip
+    }
+
+    private fun rememberIp(ip: String) {
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .edit()
+            .putString(PREF_LAST_IP, ip)
+            .apply()
+    }
+
+    private fun rememberedIp(): String? {
+        return getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .getString(PREF_LAST_IP, null)
+            ?.takeIf { it.isNotBlank() && it != "0.0.0.0" }
+    }
+
+    private fun rememberFiles(files: Set<String>) {
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .edit()
+            .putStringSet(PREF_LAST_FILES, files)
+            .apply()
+    }
+
+    private fun rememberedFiles(): Set<String> {
+        return getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .getStringSet(PREF_LAST_FILES, emptySet())
+            .orEmpty()
+            .toSet()
     }
 
     private suspend fun glassesControl(command: ByteArray): GlassModelControlResponse? {
@@ -544,14 +681,24 @@ class HeyCyanCommandService : Service() {
         const val EXTRA_ADDRESS = "address"
         const val EXTRA_NAME_CONTAINS = "name_contains"
         const val EXTRA_SECONDS = "seconds"
+        const val EXTRA_IP = "ip"
+        const val EXTRA_FILE = "file"
         const val COMMAND_STATUS = "status"
         const val COMMAND_SCAN = "scan"
         const val COMMAND_CONNECT = "connect"
         const val COMMAND_SCAN_CONNECT = "scan_connect"
         const val COMMAND_DISCONNECT = "disconnect"
         const val COMMAND_CAPTURE = "capture"
+        const val COMMAND_TRANSFER_IP = "transfer_ip"
+        const val COMMAND_LIST_FILES = "list_files"
+        const val COMMAND_SAVE_FILES = "save_files"
+        const val COMMAND_DELETE_FILES = "delete_files"
+        const val COMMAND_RESET_P2P = "reset_p2p"
         const val COMMAND_SYNC = "sync"
         const val COMMAND_CAPTURE_SYNC = "capture_sync"
+        private const val PREFS_NAME = "heycyan_command"
+        private const val PREF_LAST_IP = "last_ip"
+        private const val PREF_LAST_FILES = "last_files"
         private const val DEFAULT_SCAN_SECONDS = 15
         private const val WAKE_LOCK_TIMEOUT_MS = 10 * 60 * 1000L
     }

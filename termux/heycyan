@@ -4,22 +4,41 @@ set -euo pipefail
 ACTION="com.sdk.glassessdksample.COMMAND"
 SERVICE="com.sdk.glassessdksample/.ui.HeyCyanCommandService"
 LOG_FILE="${HOME}/heycyan-loop.log"
+DEVICE_LOG_FILE="/sdcard/Download/heycyan_cmd_log.txt"
 PID_FILE="${HOME}/.heycyan-loop.pid"
 
 run_command() {
   local command="$1"
   local wait_seconds="$2"
   shift 2 || true
-  logcat -c 2>/dev/null || true
-  am startservice -n "$SERVICE" -a "$ACTION" --es command "$command" "$@" >/dev/null
-  sleep "$wait_seconds"
-  logcat -d -s HeyCyanCmd AndroidRuntime 2>/dev/null | tee -a "$LOG_FILE" || true
+  touch "$DEVICE_LOG_FILE" 2>/dev/null || true
+  local start_line
+  start_line="$(wc -l < "$DEVICE_LOG_FILE" 2>/dev/null || echo 0)"
+  tail -n 0 -f "$DEVICE_LOG_FILE" 2>/dev/null | tee -a "$LOG_FILE" &
+  local log_pid="$!"
+  if ! am startservice -n "$SERVICE" -a "$ACTION" --es command "$command" "$@" 2>&1 | tee -a "$LOG_FILE"; then
+    am start-foreground-service -n "$SERVICE" -a "$ACTION" --es command "$command" "$@" 2>&1 | tee -a "$LOG_FILE"
+  fi
+  local elapsed=0
+  while [ "$elapsed" -lt "$wait_seconds" ]; do
+    if tail -n +"$((start_line + 1))" "$DEVICE_LOG_FILE" 2>/dev/null \
+      | grep -F "\"command\":\"$command\"" \
+      | grep -Eq '"message":"command (finished|failed|cancelled)"'; then
+      break
+    fi
+    sleep 1
+    elapsed="$((elapsed + 1))"
+  done
+  kill "$log_pid" 2>/dev/null || true
+  wait "$log_pid" 2>/dev/null || true
 }
 
 start_command() {
   local command="$1"
   shift || true
-  am startservice -n "$SERVICE" -a "$ACTION" --es command "$command" "$@" >/dev/null
+  if ! am startservice -n "$SERVICE" -a "$ACTION" --es command "$command" "$@" 2>&1 | tee -a "$LOG_FILE"; then
+    am start-foreground-service -n "$SERVICE" -a "$ACTION" --es command "$command" "$@" 2>&1 | tee -a "$LOG_FILE"
+  fi
 }
 
 usage() {
@@ -33,15 +52,22 @@ commands:
   scan-connect [filter]  Scan, then connect to the strongest device; filter matches name
   disconnect             Disconnect/unbind BLE
   shot | capture         Take one photo on the glasses
+  transfer-ip [ip]       Start transfer mode and remember the glasses HTTP IP
+  list-files [ip]        List JPGs currently on the glasses
+  save-files [file]      Save all listed/current JPGs, or one named JPG, without deleting
+  delete-files [file]    Delete all listed/current JPGs, or one named JPG, from the glasses
+  reset-p2p              Reset the glasses P2P transfer state
   sync                   Save all JPGs from the glasses, then delete saved files on the glasses
   shot-sync              Take one photo, save the new JPG, then delete it on the glasses
   loop [seconds]         Run shot-sync forever; default interval is 60 seconds
+  loop2 [seconds]        Run split shot/save/delete commands forever; default interval is 60 seconds
   loop-count [seconds] [count]
                          Run shot-sync count times; defaults are 60 seconds and 10 times
   start-loop [seconds]   Run loop in the Termux background and store a PID
   stop-loop              Stop the background loop started by start-loop
   logs                   Follow app logs
   log-file               Print the Termux loop log path
+  device-log             Print the shared app log path
 USAGE
 }
 
@@ -74,6 +100,37 @@ case "${1:-}" in
   shot|capture)
     run_command "capture" 18
     ;;
+  transfer-ip)
+    if [ "${2:-}" ]; then
+      run_command "transfer_ip" 60 --es ip "$2"
+    else
+      run_command "transfer_ip" 60
+    fi
+    ;;
+  list-files)
+    if [ "${2:-}" ]; then
+      run_command "list_files" 25 --es ip "$2"
+    else
+      run_command "list_files" 70
+    fi
+    ;;
+  save-files)
+    if [ "${2:-}" ]; then
+      run_command "save_files" 70 --es file "$2"
+    else
+      run_command "save_files" 120
+    fi
+    ;;
+  delete-files)
+    if [ "${2:-}" ]; then
+      run_command "delete_files" 30 --es file "$2"
+    else
+      run_command "delete_files" 90
+    fi
+    ;;
+  reset-p2p)
+    run_command "reset_p2p" 12
+    ;;
   sync)
     run_command "sync" 60
     ;;
@@ -86,6 +143,20 @@ case "${1:-}" in
     while true; do
       printf '%s capture_sync\n' "$(date -Is)" | tee -a "$LOG_FILE"
       run_command "capture_sync" 120 || true
+      sleep "$interval"
+    done
+    ;;
+  loop2)
+    interval="${2:-60}"
+    command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock || true
+    while true; do
+      printf '%s split capture cycle\n' "$(date -Is)" | tee -a "$LOG_FILE"
+      run_command "capture" 18 || true
+      run_command "transfer_ip" 60 || true
+      run_command "list_files" 70 || true
+      run_command "save_files" 120 || true
+      run_command "delete_files" 90 || true
+      run_command "list_files" 70 || true
       sleep "$interval"
     done
     ;;
@@ -125,10 +196,14 @@ case "${1:-}" in
     command -v termux-wake-unlock >/dev/null 2>&1 && termux-wake-unlock || true
     ;;
   logs)
-    logcat -s HeyCyanCmd GlassMediaSync AndroidRuntime
+    touch "$DEVICE_LOG_FILE" 2>/dev/null || true
+    tail -f "$DEVICE_LOG_FILE"
     ;;
   log-file)
     echo "$LOG_FILE"
+    ;;
+  device-log)
+    echo "$DEVICE_LOG_FILE"
     ;;
   -h|--help|help|"")
     usage

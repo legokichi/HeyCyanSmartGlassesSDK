@@ -84,6 +84,7 @@ class GlassMediaSync(private val context: Context) {
         val request = Request.Builder().url(url).get().build()
         client.newCall(request).execute().use { response ->
             if (response.code == 500) {
+                // The glasses return HTTP 500 for /files/media.config when no remote media remains.
                 Log.i(TAG, "GET $url returned 500; treating media.config as empty")
                 return ""
             }
@@ -225,6 +226,8 @@ class GlassMediaSync(private val context: Context) {
         return try {
             handle.initRegister()
             handle.registerCallback(callback)
+            // On the tested glasses, waiting for the delete callback can time out after Wi-Fi transfer.
+            // Treat the SDK command dispatch as the actionable result and only log callbacks if they arrive.
             handle.executeFileDelete(fileName.substringAfterLast('/'))
             true
         } catch (e: Exception) {

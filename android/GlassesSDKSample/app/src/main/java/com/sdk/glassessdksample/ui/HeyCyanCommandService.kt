@@ -359,6 +359,8 @@ class HeyCyanCommandService : Service() {
         var deleteRequestFailed = 0
 
         if (savedFiles.isNotEmpty()) {
+            // Download the batch first, then leave Wi-Fi transfer mode before issuing BLE deletes.
+            // Deleting one-by-one during transfer caused delete callback timeouts and P2P disconnects.
             prepareRemoteDelete(command)
         }
 

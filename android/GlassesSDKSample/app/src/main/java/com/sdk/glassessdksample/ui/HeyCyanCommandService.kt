@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.oudmon.ble.base.bluetooth.BleOperateManager
 import com.oudmon.ble.base.bluetooth.DeviceManager
@@ -61,7 +62,7 @@ class HeyCyanCommandService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val command = intent?.getStringExtra(EXTRA_COMMAND).orEmpty().ifBlank { COMMAND_STATUS }
-        HeyCyanLogger.info(this, command, "service command received")
+        logInfo(command, "service command received")
 
         if (command == COMMAND_PERIODICAL_CAPTURE) {
             startPeriodicalCaptureJob(intent)
@@ -78,7 +79,7 @@ class HeyCyanCommandService : Service() {
         }
 
         if (periodicalCaptureJob?.isActive == true) {
-            HeyCyanLogger.warn(this, command, "command ignored while periodical_capture is running")
+            logWarn(command, "command ignored while periodical_capture is running")
             return START_STICKY
         }
 
@@ -109,9 +110,21 @@ class HeyCyanCommandService : Service() {
         super.onDestroy()
     }
 
+    private fun logInfo(command: String, message: String) {
+        Log.i(TAG, "[$command] $message")
+    }
+
+    private fun logWarn(command: String, message: String, throwable: Throwable? = null) {
+        Log.w(TAG, "[$command] $message", throwable)
+    }
+
+    private fun logError(command: String, message: String, throwable: Throwable? = null) {
+        Log.e(TAG, "[$command] $message", throwable)
+    }
+
     private fun startPeriodicalCaptureJob(intent: Intent?) {
         if (periodicalCaptureJob?.isActive == true) {
-            HeyCyanLogger.warn(this, COMMAND_PERIODICAL_CAPTURE, "periodical_capture already running")
+            logWarn(COMMAND_PERIODICAL_CAPTURE, "periodical_capture already running")
             return
         }
         commandIntent = intent
@@ -176,7 +189,7 @@ class HeyCyanCommandService : Service() {
 
     private suspend fun runCommand(command: String) {
         try {
-            HeyCyanLogger.info(this, command, "command started")
+            logInfo(command, "command started")
             when (command) {
                 COMMAND_STATUS -> logStatus(command)
                 COMMAND_SCAN -> scanBle(command)
@@ -193,14 +206,14 @@ class HeyCyanCommandService : Service() {
                 COMMAND_CAPTURE_SYNC -> captureSync(command)
                 COMMAND_PERIODICAL_CAPTURE -> periodicalCapture(command)
                 COMMAND_PERIODICAL_CAPTURE_STOP -> stopPeriodicalCapture(command)
-                else -> HeyCyanLogger.warn(this, command, "unknown command")
+                else -> logWarn(command, "unknown command")
             }
-            HeyCyanLogger.info(this, command, "command finished")
+            logInfo(command, "command finished")
         } catch (e: CancellationException) {
-            HeyCyanLogger.warn(this, command, "command cancelled", e)
+            logWarn(command, "command cancelled", e)
             throw e
         } catch (e: Exception) {
-            HeyCyanLogger.error(this, command, "command failed", e)
+            logError(command, "command failed", e)
         }
     }
 
@@ -208,7 +221,7 @@ class HeyCyanCommandService : Service() {
         val connected = BleOperateManager.getInstance().isConnected
         val ready = BleOperateManager.getInstance().isReady
         val knownAddress = DeviceManager.getInstance().deviceAddress.orEmpty()
-        HeyCyanLogger.info(this, command, "bleConnected=$connected bleReady=$ready knownAddress=$knownAddress")
+        logInfo(command, "bleConnected=$connected bleReady=$ready knownAddress=$knownAddress")
     }
 
     private suspend fun scanBle(command: String): List<SmartWatch> {
@@ -216,12 +229,9 @@ class HeyCyanCommandService : Service() {
             ?.coerceIn(1, 60)
             ?: DEFAULT_SCAN_SECONDS
         val devices = scanBleDevices(command, seconds)
-        HeyCyanLogger.info(this, command, "scan summary count=${devices.size}")
+        logInfo(command, "scan summary count=${devices.size}")
         devices.forEachIndexed { index, device ->
-            HeyCyanLogger.info(
-                this,
-                command,
-                "scan result index=$index name=${device.deviceName} address=${device.deviceAddress} rssi=${device.rssi}"
+            logInfo(command, "scan result index=$index name=${device.deviceName} address=${device.deviceAddress} rssi=${device.rssi}"
             )
         }
         return devices
@@ -231,7 +241,7 @@ class HeyCyanCommandService : Service() {
         val address = commandIntent?.getStringExtra(EXTRA_ADDRESS)
             ?: DeviceManager.getInstance().deviceAddress.orEmpty()
         if (address.isBlank()) {
-            HeyCyanLogger.warn(this, command, "NO_BLE_ADDRESS")
+            logWarn(command, "NO_BLE_ADDRESS")
             return
         }
         connectToAddress(command, address)
@@ -256,14 +266,11 @@ class HeyCyanCommandService : Service() {
 
         val address = target?.deviceAddress
         if (address.isNullOrBlank()) {
-            HeyCyanLogger.warn(
-                this,
-                command,
-                "NO_SCAN_TARGET count=${devices.size} address=${targetAddress.orEmpty()} nameContains=${nameContains.orEmpty()}"
+            logWarn(command, "NO_SCAN_TARGET count=${devices.size} address=${targetAddress.orEmpty()} nameContains=${nameContains.orEmpty()}"
             )
             return
         }
-        HeyCyanLogger.info(this, command, "scan target name=${target.deviceName} address=${target.deviceAddress} rssi=${target.rssi}")
+        logInfo(command, "scan target name=${target.deviceName} address=${target.deviceAddress} rssi=${target.rssi}")
         connectToAddress(command, address)
     }
 
@@ -272,19 +279,16 @@ class HeyCyanCommandService : Service() {
             BleOperateManager.getInstance().unBindDevice()
         }
         delay(1000L)
-        HeyCyanLogger.info(this, command, "disconnect requested bleConnected=${BleOperateManager.getInstance().isConnected}")
+        logInfo(command, "disconnect requested bleConnected=${BleOperateManager.getInstance().isConnected}")
     }
 
     private suspend fun connectToAddress(command: String, address: String) {
-        HeyCyanLogger.info(this, command, "connecting address=$address")
+        logInfo(command, "connecting address=$address")
         withContext(Dispatchers.Main) {
             BleOperateManager.getInstance().connectDirectly(address)
         }
         val connected = waitForBleReady()
-        HeyCyanLogger.info(
-            this,
-            command,
-            "connect result connected=$connected bleConnected=${BleOperateManager.getInstance().isConnected} bleReady=${BleOperateManager.getInstance().isReady}"
+        logInfo(command, "connect result connected=$connected bleConnected=${BleOperateManager.getInstance().isConnected} bleReady=${BleOperateManager.getInstance().isReady}"
         )
     }
 
@@ -302,11 +306,11 @@ class HeyCyanCommandService : Service() {
         val devices = linkedSetOf<SmartWatch>()
         val callback = object : ScanWrapperCallback {
             override fun onStart() {
-                HeyCyanLogger.info(this@HeyCyanCommandService, command, "ble scan started seconds=$seconds")
+                logInfo(command, "ble scan started seconds=$seconds")
             }
 
             override fun onStop() {
-                HeyCyanLogger.info(this@HeyCyanCommandService, command, "ble scan stopped count=${devices.size}")
+                logInfo(command, "ble scan stopped count=${devices.size}")
             }
 
             override fun onLeScan(device: BluetoothDevice?, rssi: Int, scanRecord: ByteArray?) {
@@ -315,7 +319,7 @@ class HeyCyanCommandService : Service() {
             }
 
             override fun onScanFailed(errorCode: Int) {
-                HeyCyanLogger.warn(this@HeyCyanCommandService, command, "ble scan failed errorCode=$errorCode")
+                logWarn(command, "ble scan failed errorCode=$errorCode")
             }
 
             override fun onParsedData(device: BluetoothDevice?, scanRecord: ScanRecord?) {
@@ -350,15 +354,12 @@ class HeyCyanCommandService : Service() {
 
     private suspend fun capture(command: String): GlassModelControlResponse? {
         if (!BleOperateManager.getInstance().isConnected) {
-            HeyCyanLogger.warn(this, command, "BLE_NOT_CONNECTED")
+            logWarn(command, "BLE_NOT_CONNECTED")
             return null
         }
-        HeyCyanLogger.info(this, command, "sending photo command")
+        logInfo(command, "sending photo command")
         val response = glassesControl(byteArrayOf(0x02, 0x01, 0x01))
-        HeyCyanLogger.info(
-            this,
-            command,
-            "capture response type=${response?.dataType} error=${response?.errorCode} work=${response?.workTypeIng} p2pIp=${response?.p2pIp}"
+        logInfo(command, "capture response type=${response?.dataType} error=${response?.errorCode} work=${response?.workTypeIng} p2pIp=${response?.p2pIp}"
         )
         return response
     }
@@ -368,14 +369,14 @@ class HeyCyanCommandService : Service() {
         delay(5000L)
 
         val ip = resolveDeviceIp(captureResponse.p2pIp)?.also { rememberIp(it) } ?: run {
-            HeyCyanLogger.warn(this, command, "NO_P2P_IP_AFTER_CAPTURE")
+            logWarn(command, "NO_P2P_IP_AFTER_CAPTURE")
             return
         }
         val targets = runCatching { mediaSync.fetchJpgNames(ip) }
-            .onFailure { HeyCyanLogger.warn(this, command, "media list fetch failed ip=$ip", it) }
+            .onFailure { logWarn(command, "media list fetch failed ip=$ip", it) }
             .getOrNull()
             ?: return
-        HeyCyanLogger.info(this, command, "sync after capture count=${targets.size}")
+        logInfo(command, "sync after capture count=${targets.size}")
         saveTargets(command, ip, targets)
     }
 
@@ -385,11 +386,11 @@ class HeyCyanCommandService : Service() {
             ?: DEFAULT_LOOP_SECONDS
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         if (prefs.getBoolean(PREF_PERIODICAL_CAPTURE_RUNNING, false)) {
-            HeyCyanLogger.warn(this, command, "periodical_capture already running")
+            logWarn(command, "periodical_capture already running")
             return
         }
         prefs.edit().putBoolean(PREF_PERIODICAL_CAPTURE_RUNNING, true).apply()
-        HeyCyanLogger.info(this, command, "periodical_capture started intervalSeconds=$intervalSeconds")
+        logInfo(command, "periodical_capture started intervalSeconds=$intervalSeconds")
 
         var cycle = 0
         val intervalMs = intervalSeconds * 1000L
@@ -397,17 +398,14 @@ class HeyCyanCommandService : Service() {
             while (scope.isActive && prefs.getBoolean(PREF_PERIODICAL_CAPTURE_RUNNING, false)) {
                 cycle++
                 val startedAt = SystemClock.elapsedRealtime()
-                HeyCyanLogger.info(this, command, "periodical_capture cycle started cycle=$cycle")
+                logInfo(command, "periodical_capture cycle started cycle=$cycle")
                 runCatching { captureSync(command) }
-                    .onFailure { HeyCyanLogger.warn(this, command, "periodical_capture cycle failed cycle=$cycle", it) }
+                    .onFailure { logWarn(command, "periodical_capture cycle failed cycle=$cycle", it) }
 
                 val elapsedMs = SystemClock.elapsedRealtime() - startedAt
                 val waitMs = (intervalMs - elapsedMs).coerceAtLeast(0L)
                 val overrunMs = (elapsedMs - intervalMs).coerceAtLeast(0L)
-                HeyCyanLogger.info(
-                    this,
-                    command,
-                    "periodical_capture cycle finished cycle=$cycle elapsedMs=$elapsedMs waitMs=$waitMs overrunMs=$overrunMs"
+                logInfo(command, "periodical_capture cycle finished cycle=$cycle elapsedMs=$elapsedMs waitMs=$waitMs overrunMs=$overrunMs"
                 )
                 if (waitMs > 0L) {
                     var remaining = waitMs
@@ -420,7 +418,7 @@ class HeyCyanCommandService : Service() {
             }
         } finally {
             prefs.edit().putBoolean(PREF_PERIODICAL_CAPTURE_RUNNING, false).apply()
-            HeyCyanLogger.info(this, command, "periodical_capture stopped")
+            logInfo(command, "periodical_capture stopped")
         }
     }
 
@@ -429,23 +427,23 @@ class HeyCyanCommandService : Service() {
             .edit()
             .putBoolean(PREF_PERIODICAL_CAPTURE_RUNNING, false)
             .apply()
-        HeyCyanLogger.info(this, command, "periodical_capture stop requested")
+        logInfo(command, "periodical_capture stop requested")
     }
 
     private suspend fun transferIp(command: String) {
         val ip = resolveDeviceIp(commandIntent?.getStringExtra(EXTRA_IP)) ?: run {
-            HeyCyanLogger.warn(this, command, "NO_P2P_IP")
+            logWarn(command, "NO_P2P_IP")
             return
         }
         rememberIp(ip)
-        HeyCyanLogger.info(this, command, "transfer ip=$ip")
+        logInfo(command, "transfer ip=$ip")
     }
 
     private suspend fun listFiles(command: String): Set<String> {
         val names = fetchFileNames(command) ?: return emptySet()
-        HeyCyanLogger.info(this, command, "file count=${names.size}")
+        logInfo(command, "file count=${names.size}")
         names.forEachIndexed { index, fileName ->
-            HeyCyanLogger.info(this, command, "file index=$index name=$fileName")
+            logInfo(command, "file index=$index name=$fileName")
         }
         rememberFiles(names)
         return names
@@ -455,7 +453,7 @@ class HeyCyanCommandService : Service() {
         val requestedFile = commandIntent?.getStringExtra(EXTRA_FILE)?.takeIf { it.isNotBlank() }
         val targets = requestedFile?.let { setOf(it) } ?: fetchFileNames(command) ?: return
         val ip = activeIp(command) ?: return
-        HeyCyanLogger.info(this, command, "save count=${targets.size}")
+        logInfo(command, "save count=${targets.size}")
         saveOnly(command, ip, targets)
     }
 
@@ -465,7 +463,7 @@ class HeyCyanCommandService : Service() {
             ?: fetchFileNames(command)
             ?: rememberedFiles()
         if (targets.isEmpty()) {
-            HeyCyanLogger.info(this, command, "no files to delete")
+            logInfo(command, "no files to delete")
             return
         }
 
@@ -477,41 +475,41 @@ class HeyCyanCommandService : Service() {
                 .onSuccess { deleteOk ->
                     if (deleteOk) {
                         deleted++
-                        HeyCyanLogger.info(this, command, "deleted remote file=$fileName")
+                        logInfo(command, "deleted remote file=$fileName")
                     } else {
                         deletePending++
-                        HeyCyanLogger.warn(this, command, "delete response timed out file=$fileName; next list/sync will verify")
+                        logWarn(command, "delete response timed out file=$fileName; next list/sync will verify")
                     }
                 }
                 .onFailure {
                     deletePending++
-                    HeyCyanLogger.warn(this, command, "delete failed file=$fileName", it)
+                    logWarn(command, "delete failed file=$fileName", it)
                 }
         }
-        HeyCyanLogger.info(this, command, "delete summary deleted=$deleted deletePending=$deletePending")
+        logInfo(command, "delete summary deleted=$deleted deletePending=$deletePending")
     }
 
     private suspend fun resetP2p(command: String) {
         resetTransferForDelete(command)
-        HeyCyanLogger.info(this, command, "p2p reset requested")
+        logInfo(command, "p2p reset requested")
     }
 
     private suspend fun syncAll(command: String) {
         val ip = resolveDeviceIp(null)?.also { rememberIp(it) } ?: run {
-            HeyCyanLogger.warn(this, command, "NO_P2P_IP")
+            logWarn(command, "NO_P2P_IP")
             return
         }
         val targets = runCatching { mediaSync.fetchJpgNames(ip) }
-            .onFailure { HeyCyanLogger.warn(this, command, "media list fetch failed ip=$ip", it) }
+            .onFailure { logWarn(command, "media list fetch failed ip=$ip", it) }
             .getOrNull()
             ?: return
-        HeyCyanLogger.info(this, command, "sync all count=${targets.size}")
+        logInfo(command, "sync all count=${targets.size}")
         saveTargets(command, ip, targets)
     }
 
     private suspend fun saveOnly(command: String, ip: String, targets: Set<String>): List<String> {
         if (targets.isEmpty()) {
-            HeyCyanLogger.info(this, command, "no files to save")
+            logInfo(command, "no files to save")
             return emptyList()
         }
         var currentIp = ip
@@ -520,25 +518,25 @@ class HeyCyanCommandService : Service() {
         targets.forEach { fileName ->
             val uri = runCatching { mediaSync.save(currentIp, fileName) }
                 .recoverCatching { firstError ->
-                    HeyCyanLogger.warn(this, command, "save failed once file=$fileName; reconnecting P2P", firstError)
+                    logWarn(command, "save failed once file=$fileName; reconnecting P2P", firstError)
                     currentIp = resolveDeviceIp(null)?.also { rememberIp(it) } ?: throw firstError
                     mediaSync.save(currentIp, fileName)
                 }
-                .onFailure { HeyCyanLogger.warn(this, command, "save failed file=$fileName", it) }
+                .onFailure { logWarn(command, "save failed file=$fileName", it) }
                 .getOrNull()
 
             if (uri != null) {
                 savedFiles.add(fileName)
-                HeyCyanLogger.info(this, command, "saved file=$fileName uri=$uri")
+                logInfo(command, "saved file=$fileName uri=$uri")
             }
         }
-        HeyCyanLogger.info(this, command, "save summary saved=${savedFiles.size}")
+        logInfo(command, "save summary saved=${savedFiles.size}")
         return savedFiles
     }
 
     private suspend fun saveTargets(command: String, ip: String, targets: Set<String>) {
         if (targets.isEmpty()) {
-            HeyCyanLogger.info(this, command, "no files to save")
+            logInfo(command, "no files to save")
             return
         }
         val savedFiles = saveOnly(command, ip, targets)
@@ -554,18 +552,18 @@ class HeyCyanCommandService : Service() {
                 .onSuccess { deleteOk ->
                     if (deleteOk) {
                         deleted++
-                        HeyCyanLogger.info(this, command, "deleted remote file=$fileName")
+                        logInfo(command, "deleted remote file=$fileName")
                     } else {
                         deletePending++
-                        HeyCyanLogger.warn(this, command, "delete response timed out file=$fileName; next sync will verify")
+                        logWarn(command, "delete response timed out file=$fileName; next sync will verify")
                     }
                 }
                 .onFailure {
                     deletePending++
-                    HeyCyanLogger.warn(this, command, "delete failed file=$fileName", it)
+                    logWarn(command, "delete failed file=$fileName", it)
                 }
         }
-        HeyCyanLogger.info(this, command, "sync summary saved=${savedFiles.size} deleted=$deleted deletePending=$deletePending")
+        logInfo(command, "sync summary saved=${savedFiles.size} deleted=$deleted deletePending=$deletePending")
     }
 
     private suspend fun activeIp(command: String): String? {
@@ -575,7 +573,7 @@ class HeyCyanCommandService : Service() {
         }
         rememberedIp()?.let { return it }
         return resolveDeviceIp(null)?.also { rememberIp(it) } ?: run {
-            HeyCyanLogger.warn(this, command, "NO_P2P_IP")
+            logWarn(command, "NO_P2P_IP")
             null
         }
     }
@@ -584,18 +582,18 @@ class HeyCyanCommandService : Service() {
         val firstIp = activeIp(command) ?: return null
         val names = runCatching { mediaSync.fetchJpgNames(firstIp) }
             .recoverCatching { firstError ->
-                HeyCyanLogger.warn(this, command, "media list fetch failed once ip=$firstIp; reconnecting P2P", firstError)
+                logWarn(command, "media list fetch failed once ip=$firstIp; reconnecting P2P", firstError)
                 val retryIp = resolveDeviceIp(null)?.also { rememberIp(it) } ?: throw firstError
                 mediaSync.fetchJpgNames(retryIp)
             }
-            .onFailure { HeyCyanLogger.warn(this, command, "media list fetch failed", it) }
+            .onFailure { logWarn(command, "media list fetch failed", it) }
             .getOrNull()
         names?.let { rememberFiles(it) }
         return names
     }
 
     private suspend fun resetTransferForDelete(command: String) {
-        HeyCyanLogger.info(this, command, "resetting P2P before remote delete")
+        logInfo(command, "resetting P2P before remote delete")
         unregisterTransferNotifyListener()
         unregisterP2pReceiver()
         val manager = WifiP2pManagerSingleton.getInstance(applicationContext)
@@ -614,7 +612,7 @@ class HeyCyanCommandService : Service() {
 
     private suspend fun resolveDeviceIp(preferredIp: String?): String? {
         preferredIp?.takeIf { it.isNotBlank() && it != "0.0.0.0" }?.let {
-            HeyCyanLogger.info(this, "resolve_ip", "using preferred ip=$it")
+            logInfo("resolve_ip", "using preferred ip=$it")
             rememberIp(it)
             return it
         }
@@ -625,25 +623,22 @@ class HeyCyanCommandService : Service() {
         ensureP2pDiscovery()
 
         val transferState = glassesControl(byteArrayOf(0x02, 0x01, 0x04))
-        HeyCyanLogger.info(
-            this,
-            "resolve_ip",
-            "transfer command type=${transferState?.dataType} images=${transferState?.imageCount} videos=${transferState?.videoCount} records=${transferState?.recordCount} p2pIp=${transferState?.p2pIp} error=${transferState?.errorCode}"
+        logInfo("resolve_ip", "transfer command type=${transferState?.dataType} images=${transferState?.imageCount} videos=${transferState?.videoCount} records=${transferState?.recordCount} p2pIp=${transferState?.p2pIp} error=${transferState?.errorCode}"
         )
 
         transferState?.p2pIp?.takeIf { it.isNotBlank() && it != "0.0.0.0" }?.let {
-            HeyCyanLogger.info(this, "resolve_ip", "using transfer response ip=$it")
+            logInfo("resolve_ip", "using transfer response ip=$it")
             rememberIp(it)
             return it
         }
 
         val ip = withTimeoutOrNull(45000L) { ipWaiter.await() }
         if (ip.isNullOrBlank()) {
-            HeyCyanLogger.warn(this, "resolve_ip", "NO_BLE_WIFI_IP_NOTIFY")
+            logWarn("resolve_ip", "NO_BLE_WIFI_IP_NOTIFY")
             return null
         }
         withTimeoutOrNull(10000L) { transferP2pConnected?.await() }
-        HeyCyanLogger.info(this, "resolve_ip", "using notify ip=$ip")
+        logInfo("resolve_ip", "using notify ip=$ip")
         rememberIp(ip)
         return ip
     }
@@ -703,10 +698,10 @@ class HeyCyanCommandService : Service() {
                 }
             }
         } ?: false
-        HeyCyanLogger.info(this, "resolve_ip", "stale p2p group removed=$removedStaleGroup")
+        logInfo("resolve_ip", "stale p2p group removed=$removedStaleGroup")
         delay(1000L)
         manager.startPeerDiscovery()
-        HeyCyanLogger.info(this, "resolve_ip", "p2p discovery started")
+        logInfo("resolve_ip", "p2p discovery started")
     }
 
     private fun unregisterP2pReceiver() {
@@ -721,9 +716,9 @@ class HeyCyanCommandService : Service() {
         runCatching {
             LargeDataHandler.getInstance().addOutDeviceListener(2, transferNotifyListener)
             transferNotifyRegistered = true
-            HeyCyanLogger.info(this, "resolve_ip", "registered transfer notify listener")
+            logInfo("resolve_ip", "registered transfer notify listener")
         }.onFailure {
-            HeyCyanLogger.warn(this, "resolve_ip", "failed to register transfer notify listener", it)
+            logWarn("resolve_ip", "failed to register transfer notify listener", it)
         }
     }
 
@@ -731,9 +726,9 @@ class HeyCyanCommandService : Service() {
         if (!transferNotifyRegistered) return
         runCatching {
             LargeDataHandler.getInstance().removeOutDeviceListener(2)
-            HeyCyanLogger.info(this, "resolve_ip", "unregistered transfer notify listener")
+            logInfo("resolve_ip", "unregistered transfer notify listener")
         }.onFailure {
-            HeyCyanLogger.warn(this, "resolve_ip", "failed to unregister transfer notify listener", it)
+            logWarn("resolve_ip", "failed to unregister transfer notify listener", it)
         }
         transferNotifyRegistered = false
     }
@@ -755,7 +750,7 @@ class HeyCyanCommandService : Service() {
         override fun onWifiP2pEnabled() = Unit
         override fun onWifiP2pDisabled() = Unit
         override fun onPeersChanged(peers: Collection<WifiP2pDevice>) {
-            HeyCyanLogger.info(this@HeyCyanCommandService, "resolve_ip", "p2p peers count=${peers.size}")
+            logInfo("resolve_ip", "p2p peers count=${peers.size}")
             val target = peers.firstOrNull { peer ->
                 val name = peer.deviceName.orEmpty()
                 name.contains("Music", ignoreCase = true) ||
@@ -763,47 +758,41 @@ class HeyCyanCommandService : Service() {
                     name.contains("Glass", ignoreCase = true)
             } ?: peers.firstOrNull()
             if (target != null) {
-                HeyCyanLogger.info(
-                    this@HeyCyanCommandService,
-                    "resolve_ip",
-                    "p2p connect target name=${target.deviceName} address=${target.deviceAddress}"
+                logInfo("resolve_ip", "p2p connect target name=${target.deviceName} address=${target.deviceAddress}"
                 )
                 WifiP2pManagerSingleton.getInstance(applicationContext).connectToDevice(target)
             }
         }
         override fun onThisDeviceChanged(device: WifiP2pDevice) = Unit
         override fun onConnected(info: WifiP2pInfo) {
-            HeyCyanLogger.info(
-                this@HeyCyanCommandService,
-                "resolve_ip",
-                "p2p connected groupFormed=${info.groupFormed} isGroupOwner=${info.isGroupOwner} groupOwnerIp=${info.groupOwnerAddress?.hostAddress}"
+            logInfo("resolve_ip", "p2p connected groupFormed=${info.groupFormed} isGroupOwner=${info.isGroupOwner} groupOwnerIp=${info.groupOwnerAddress?.hostAddress}"
             )
             transferP2pConnected?.takeIf { !it.isCompleted }?.complete(Unit)
         }
         override fun onDisconnected() {
-            HeyCyanLogger.info(this@HeyCyanCommandService, "resolve_ip", "p2p disconnected")
+            logInfo("resolve_ip", "p2p disconnected")
         }
         override fun onPeerDiscoveryStarted() = Unit
         override fun onPeerDiscoveryFailed(reason: Int) {
-            HeyCyanLogger.warn(this@HeyCyanCommandService, "resolve_ip", "p2p discovery failed reason=$reason")
+            logWarn("resolve_ip", "p2p discovery failed reason=$reason")
         }
         override fun onConnectRequestSent() {
-            HeyCyanLogger.info(this@HeyCyanCommandService, "resolve_ip", "p2p connect request sent")
+            logInfo("resolve_ip", "p2p connect request sent")
         }
         override fun onConnectRequestFailed(reason: Int) {
-            HeyCyanLogger.warn(this@HeyCyanCommandService, "resolve_ip", "p2p connect request failed reason=$reason")
+            logWarn("resolve_ip", "p2p connect request failed reason=$reason")
         }
         override fun connecting() {
-            HeyCyanLogger.info(this@HeyCyanCommandService, "resolve_ip", "p2p already connecting")
+            logInfo("resolve_ip", "p2p already connecting")
         }
         override fun cancelConnect() {
-            HeyCyanLogger.info(this@HeyCyanCommandService, "resolve_ip", "p2p cancel connect")
+            logInfo("resolve_ip", "p2p cancel connect")
         }
         override fun cancelConnectFail(reason: Int) {
-            HeyCyanLogger.warn(this@HeyCyanCommandService, "resolve_ip", "p2p cancel connect failed reason=$reason")
+            logWarn("resolve_ip", "p2p cancel connect failed reason=$reason")
         }
         override fun retryAlsoFailed() {
-            HeyCyanLogger.warn(this@HeyCyanCommandService, "resolve_ip", "p2p retry also failed")
+            logWarn("resolve_ip", "p2p retry also failed")
         }
     }
 
@@ -815,13 +804,13 @@ class HeyCyanCommandService : Service() {
                 0x08 -> {
                     if (load.size >= 11) {
                         val ip = "${load[7].toInt() and 0xFF}.${load[8].toInt() and 0xFF}.${load[9].toInt() and 0xFF}.${load[10].toInt() and 0xFF}"
-                        HeyCyanLogger.info(this@HeyCyanCommandService, "resolve_ip", "BLE reported WiFi IP: $ip")
+                        logInfo("resolve_ip", "BLE reported WiFi IP: $ip")
                         transferIp?.takeIf { !it.isCompleted }?.complete(ip)
                     }
                 }
                 0x09 -> {
                     val error = load.getOrNull(7)?.toInt()?.and(0xFF)
-                    HeyCyanLogger.warn(this@HeyCyanCommandService, "resolve_ip", "P2P/WiFi notify error=$error")
+                    logWarn("resolve_ip", "P2P/WiFi notify error=$error")
                     if (error == 255) {
                         WifiP2pManagerSingleton.getInstance(applicationContext).resetDeviceP2p()
                     }
@@ -831,6 +820,7 @@ class HeyCyanCommandService : Service() {
     }
 
     companion object {
+        private const val TAG = "HeyCyanCmd"
         const val ACTION_COMMAND = "com.sdk.glassessdksample.COMMAND"
         const val EXTRA_COMMAND = "command"
         const val EXTRA_ADDRESS = "address"

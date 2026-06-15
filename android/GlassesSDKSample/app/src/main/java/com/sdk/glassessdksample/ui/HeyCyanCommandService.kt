@@ -240,10 +240,18 @@ class HeyCyanCommandService : Service() {
             logWarn(COMMAND_SYNC_MEDIA_ALL, "NO_P2P_IP")
             return
         }
-        val targets = runCatching { mediaSync.fetchFileNames(ip) }
+        val mediaConfig = runCatching { mediaSync.fetchMediaConfig(ip) }
             .onFailure { logWarn(COMMAND_SYNC_MEDIA_ALL, "media list fetch failed ip=$ip", it) }
             .getOrNull()
             ?: return
+        logInfo(COMMAND_SYNC_MEDIA_ALL, "media.config raw=${mediaConfig.raw.toLogPreview()}")
+        val targets = mediaConfig.fileNames
+        val mp4Targets = targets.filter { it.endsWith(".mp4", ignoreCase = true) }
+        if (mp4Targets.isEmpty()) {
+            logWarn(COMMAND_SYNC_MEDIA_ALL, "no mp4 filenames in media.config")
+        } else {
+            logInfo(COMMAND_SYNC_MEDIA_ALL, "mp4 filenames=${mp4Targets.joinToString(",")}")
+        }
         logInfo(COMMAND_SYNC_MEDIA_ALL, "sync all media count=${targets.size}")
         saveTargets(ip, targets, COMMAND_SYNC_MEDIA_ALL)
     }
@@ -426,6 +434,14 @@ class HeyCyanCommandService : Service() {
                 }
             }
         }
+    }
+
+    private fun String.toLogPreview(maxLength: Int = 700): String {
+        val compact = lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .joinToString("|")
+        return if (compact.length <= maxLength) compact else compact.take(maxLength) + "...(truncated)"
     }
 
     private suspend fun ensureP2pDiscovery() {

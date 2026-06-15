@@ -28,13 +28,16 @@ class GlassMediaSync(private val context: Context) {
     private val client = OkHttpClient()
 
     suspend fun fetchJpgNames(baseIp: String): Set<String> = withContext(Dispatchers.IO) {
-        val body = getText("http://$baseIp/files/media.config")
-        parseFileNames(body).filterTo(linkedSetOf()) { it.isImageFile() }
+        fetchMediaConfig(baseIp).fileNames.filterTo(linkedSetOf()) { it.isImageFile() }
     }
 
     suspend fun fetchFileNames(baseIp: String): Set<String> = withContext(Dispatchers.IO) {
+        fetchMediaConfig(baseIp).fileNames
+    }
+
+    suspend fun fetchMediaConfig(baseIp: String): MediaConfig = withContext(Dispatchers.IO) {
         val body = getText("http://$baseIp/files/media.config")
-        parseFileNames(body)
+        MediaConfig(body, parseFileNames(body))
     }
 
     suspend fun saveAndDelete(baseIp: String, fileName: String): SyncResult = withContext(Dispatchers.IO) {
@@ -275,6 +278,11 @@ class GlassMediaSync(private val context: Context) {
         data class SavedAndDeleted(val fileName: String, val uri: Uri) : SyncResult()
         data class SavedDeleteFailed(val fileName: String, val uri: Uri) : SyncResult()
     }
+
+    data class MediaConfig(
+        val raw: String,
+        val fileNames: Set<String>
+    )
 
     companion object {
         private const val TAG = "GlassMediaSync"

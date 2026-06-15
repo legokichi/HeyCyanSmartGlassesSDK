@@ -40,6 +40,9 @@ android {
         viewBinding = true
     }
 
+    // The Java sources under ui/wifi are stale decompiled code with mixed package
+    // names and broken dependencies. Keep compiling the Kotlin P2P implementation,
+    // but exclude those Java remnants so the sample app can build.
     sourceSets {
         main {
             java {

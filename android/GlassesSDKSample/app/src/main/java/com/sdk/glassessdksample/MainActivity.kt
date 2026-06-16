@@ -140,6 +140,7 @@ class MainActivity : AppCompatActivity() {
             binding.btnVideo,
             binding.btnRecord,
             binding.btnDataDownload,
+            binding.btnMediaSyncLogClear,
             binding.btnRefreshDeviceInfo,
             binding.btnPeriodicalCaptureStart,
             binding.btnPeriodicalCaptureOnlyStart,
@@ -280,6 +281,9 @@ class MainActivity : AppCompatActivity() {
                         // Android 12 及以下版本直接启动下载
                         startMediaSyncAllFromUi()
                     }
+                }
+                binding.btnMediaSyncLogClear -> {
+                    clearMediaSyncLog()
                 }
                 binding.btnRefreshDeviceInfo -> {
                     refreshDeviceInfoPanel()
@@ -481,14 +485,34 @@ class MainActivity : AppCompatActivity() {
 
     private fun clearMediaSyncLog() {
         mediaSyncLogLines.clear()
-        binding.textMediaSyncLogBody.text = ""
+        renderMediaSyncLog()
     }
 
     private fun appendMediaSyncLog(line: String) {
         mediaSyncLogLines.addLast(line)
-        while (mediaSyncLogLines.size > 80) {
+        trimMediaSyncLog()
+        renderMediaSyncLog()
+    }
+
+    private fun trimMediaSyncLog() {
+        val maxLines = binding.inputMediaSyncLogMaxLines.text
+            ?.toString()
+            ?.toIntOrNull()
+            ?.coerceIn(1, 10_000)
+            ?: 100
+        if (binding.inputMediaSyncLogMaxLines.text?.toString() != maxLines.toString()) {
+            binding.inputMediaSyncLogMaxLines.setText(maxLines.toString())
+        }
+        while (mediaSyncLogLines.size > maxLines) {
             mediaSyncLogLines.removeFirst()
         }
-        binding.textMediaSyncLogBody.text = mediaSyncLogLines.joinToString("\n")
+    }
+
+    private fun renderMediaSyncLog() {
+        binding.textMediaSyncLogBody.text = if (mediaSyncLogLines.isEmpty()) {
+            getString(R.string.media_sync_log_placeholder)
+        } else {
+            mediaSyncLogLines.joinToString("\n")
+        }
     }
 }

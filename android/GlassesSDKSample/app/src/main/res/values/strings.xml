@@ -9,7 +9,6 @@
     <string name="text_15">Download Media</string>
     <string name="media_sync_log_title">Media sync log</string>
     <string name="media_sync_log_placeholder">No media sync logs yet.</string>
-    <string name="media_sync_log_max_lines">Max log lines</string>
     <string name="media_sync_log_clear">Clear log</string>
     <string name="device_info_title">Device info</string>
     <string name="device_info_refresh">Refresh device info</string>

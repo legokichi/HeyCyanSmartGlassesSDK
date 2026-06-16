@@ -92,39 +92,13 @@
             android:text="@string/media_sync_log_placeholder"
             android:textIsSelectable="true" />
 
-        <LinearLayout
-            android:id="@+id/layout_media_sync_log_controls"
-            android:layout_width="match_parent"
+        <Button
+            android:id="@+id/btn_media_sync_log_clear"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="@dimen/qc_dp_16"
             android:layout_marginTop="@dimen/qc_dp_8"
-            android:layout_marginEnd="@dimen/qc_dp_16"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <TextView
-                android:id="@+id/text_media_sync_log_max_lines_label"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/media_sync_log_max_lines" />
-
-            <EditText
-                android:id="@+id/input_media_sync_log_max_lines"
-                android:layout_width="@dimen/qc_dp_80"
-                android:layout_height="wrap_content"
-                android:autofillHints=""
-                android:inputType="number"
-                android:maxLines="1"
-                android:text="100" />
-
-            <Button
-                android:id="@+id/btn_media_sync_log_clear"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="@dimen/qc_dp_8"
-                android:text="@string/media_sync_log_clear" />
-        </LinearLayout>
+            android:text="@string/media_sync_log_clear" />
 
         <TextView
             android:id="@+id/text_device_info_title"

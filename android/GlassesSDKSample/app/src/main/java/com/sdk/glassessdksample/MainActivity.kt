@@ -36,6 +36,7 @@ import java.io.File
 import java.util.ArrayDeque
 
 private const val DEVICE_INFO_BATTERY_CALLBACK = "device_info_panel"
+private const val MEDIA_SYNC_LOG_MAX_LINES = 100
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: AcitivytMainBinding
@@ -495,15 +496,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun trimMediaSyncLog() {
-        val maxLines = binding.inputMediaSyncLogMaxLines.text
-            ?.toString()
-            ?.toIntOrNull()
-            ?.coerceIn(1, 10_000)
-            ?: 100
-        if (binding.inputMediaSyncLogMaxLines.text?.toString() != maxLines.toString()) {
-            binding.inputMediaSyncLogMaxLines.setText(maxLines.toString())
-        }
-        while (mediaSyncLogLines.size > maxLines) {
+        while (mediaSyncLogLines.size > MEDIA_SYNC_LOG_MAX_LINES) {
             mediaSyncLogLines.removeFirst()
         }
     }

@@ -210,7 +210,7 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
             wifiP2pManager.requestConnectionInfo(channel, object : WifiP2pManager.ConnectionInfoListener {
                 override fun onConnectionInfoAvailable(info: WifiP2pInfo) {
                     Log.d(TAG, "Connection info available: groupFormed=${info.groupFormed}, isGroupOwner=${info.isGroupOwner}")
-                    this@WifiP2pManagerSingleton.onConnectionInfoAvailable(info)
+                    handleConnectionInfoAvailable(info)
                 }
             })
         }
@@ -271,7 +271,7 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
         callbacks.forEach { it.onThisDeviceChanged(device) }
     }
     
-    internal fun onConnectionInfoAvailable(info: WifiP2pInfo) {
+    private fun handleConnectionInfoAvailable(info: WifiP2pInfo) {
         connecting = false
         connected = info.groupFormed
         handler.removeCallbacks(connectTimeOut)

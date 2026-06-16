@@ -176,13 +176,20 @@
                     android:text="@string/periodical_capture_start" />
 
                 <Button
-                    android:id="@+id/btn_periodical_capture_stop"
+                    android:id="@+id/btn_periodical_capture_only_start"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="@dimen/qc_dp_8"
                     android:layout_weight="1"
-                    android:text="@string/periodical_capture_stop" />
+                    android:text="@string/periodical_capture_only_start" />
             </LinearLayout>
+
+            <Button
+                android:id="@+id/btn_periodical_capture_stop"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/qc_dp_8"
+                android:text="@string/periodical_capture_stop" />
         </LinearLayout>
     </LinearLayout>
 

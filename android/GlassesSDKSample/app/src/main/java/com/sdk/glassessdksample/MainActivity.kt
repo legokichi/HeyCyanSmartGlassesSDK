@@ -142,6 +142,7 @@ class MainActivity : AppCompatActivity() {
             binding.btnDataDownload,
             binding.btnRefreshDeviceInfo,
             binding.btnPeriodicalCaptureStart,
+            binding.btnPeriodicalCaptureOnlyStart,
             binding.btnPeriodicalCaptureStop
         ) {
             when (this) {
@@ -285,6 +286,9 @@ class MainActivity : AppCompatActivity() {
                 }
                 binding.btnPeriodicalCaptureStart -> {
                     startPeriodicalCaptureFromUi()
+                }
+                binding.btnPeriodicalCaptureOnlyStart -> {
+                    startPeriodicalCaptureOnlyFromUi()
                 }
                 binding.btnPeriodicalCaptureStop -> {
                     stopPeriodicalCaptureFromUi()
@@ -431,16 +435,29 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startPeriodicalCaptureFromUi() {
+        val seconds = readPeriodicalCaptureSeconds()
+        sendCommandService(HeyCyanCommandService.COMMAND_PERIODICAL_CAPTURE) {
+            putExtra(HeyCyanCommandService.EXTRA_SECONDS, seconds)
+        }
+        Toast.makeText(this, getString(R.string.periodical_capture_start_requested), Toast.LENGTH_SHORT).show()
+    }
+
+    private fun startPeriodicalCaptureOnlyFromUi() {
+        val seconds = readPeriodicalCaptureSeconds()
+        sendCommandService(HeyCyanCommandService.COMMAND_PERIODICAL_CAPTURE_ONLY) {
+            putExtra(HeyCyanCommandService.EXTRA_SECONDS, seconds)
+        }
+        Toast.makeText(this, getString(R.string.periodical_capture_only_start_requested), Toast.LENGTH_SHORT).show()
+    }
+
+    private fun readPeriodicalCaptureSeconds(): Int {
         val seconds = binding.inputPeriodicalCaptureInterval.text
             ?.toString()
             ?.toIntOrNull()
             ?.coerceIn(1, 86_400)
             ?: 60
         binding.inputPeriodicalCaptureInterval.setText(seconds.toString())
-        sendCommandService(HeyCyanCommandService.COMMAND_PERIODICAL_CAPTURE) {
-            putExtra(HeyCyanCommandService.EXTRA_SECONDS, seconds)
-        }
-        Toast.makeText(this, getString(R.string.periodical_capture_start_requested), Toast.LENGTH_SHORT).show()
+        return seconds
     }
 
     private fun stopPeriodicalCaptureFromUi() {

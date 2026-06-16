@@ -60,7 +60,11 @@ class HeyCyanCommandService : Service() {
 
         return when (command) {
             COMMAND_PERIODICAL_CAPTURE -> {
-                startPeriodicalCaptureJob(intent)
+                startPeriodicalCaptureJob(intent, COMMAND_PERIODICAL_CAPTURE)
+                START_STICKY
+            }
+            COMMAND_PERIODICAL_CAPTURE_ONLY -> {
+                startPeriodicalCaptureJob(intent, COMMAND_PERIODICAL_CAPTURE_ONLY)
                 START_STICKY
             }
             COMMAND_PERIODICAL_CAPTURE_STOP -> {
@@ -123,17 +127,17 @@ class HeyCyanCommandService : Service() {
         )
     }
 
-    private fun startPeriodicalCaptureJob(intent: Intent?) {
+    private fun startPeriodicalCaptureJob(intent: Intent?, command: String) {
         if (periodicalCaptureJob?.isActive == true) {
-            logWarn(COMMAND_PERIODICAL_CAPTURE, "periodical_capture already running")
+            logWarn(command, "periodical_capture already running")
             return
         }
         commandIntent = intent
         acquireWakeLock()
-        startForeground(NOTIFICATION_ID, buildPeriodicalCaptureNotification())
+        startForeground(NOTIFICATION_ID, buildPeriodicalCaptureNotification(command))
         periodicalCaptureJob = scope.launch {
             try {
-                runPeriodicalCapture()
+                runPeriodicalCapture(command)
             } finally {
                 releaseWakeLock()
                 unregisterTransferNotifyListener()
@@ -145,7 +149,7 @@ class HeyCyanCommandService : Service() {
         }
     }
 
-    private fun buildPeriodicalCaptureNotification(): Notification {
+    private fun buildPeriodicalCaptureNotification(command: String): Notification {
         createNotificationChannel()
         val pendingIntentFlags = PendingIntent.FLAG_UPDATE_CURRENT or
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
@@ -155,10 +159,15 @@ class HeyCyanCommandService : Service() {
             Intent(this, MainActivity::class.java),
             pendingIntentFlags
         )
+        val contentText = if (command == COMMAND_PERIODICAL_CAPTURE_ONLY) {
+            "Taking photos in the background without syncing"
+        } else {
+            "Taking and syncing photos in the background"
+        }
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("HeyCyan periodical capture")
-            .setContentText("Taking and syncing photos in the background")
+            .setContentText(contentText)
             .setContentIntent(contentIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -188,47 +197,47 @@ class HeyCyanCommandService : Service() {
         }
     }
 
-    private suspend fun runPeriodicalCapture() {
+    private suspend fun runPeriodicalCapture(command: String) {
         try {
-            logInfo(COMMAND_PERIODICAL_CAPTURE, "command started")
-            periodicalCapture()
-            logInfo(COMMAND_PERIODICAL_CAPTURE, "command finished")
+            logInfo(command, "command started")
+            periodicalCapture(command)
+            logInfo(command, "command finished")
         } catch (e: CancellationException) {
-            logWarn(COMMAND_PERIODICAL_CAPTURE, "command cancelled", e)
+            logWarn(command, "command cancelled", e)
             throw e
         } catch (e: Exception) {
-            logError(COMMAND_PERIODICAL_CAPTURE, "command failed", e)
+            logError(command, "command failed", e)
         }
     }
 
-    private suspend fun capture(): GlassModelControlResponse? {
+    private suspend fun capture(command: String = COMMAND_PERIODICAL_CAPTURE): GlassModelControlResponse? {
         if (!BleOperateManager.getInstance().isConnected) {
-            logWarn(COMMAND_PERIODICAL_CAPTURE, "BLE_NOT_CONNECTED")
+            logWarn(command, "BLE_NOT_CONNECTED")
             return null
         }
-        logInfo(COMMAND_PERIODICAL_CAPTURE, "sending photo command")
+        logInfo(command, "sending photo command")
         val response = glassesControl(byteArrayOf(0x02, 0x01, 0x01))
         logInfo(
-            COMMAND_PERIODICAL_CAPTURE,
+            command,
             "capture response type=${response?.dataType} error=${response?.errorCode} work=${response?.workTypeIng} p2pIp=${response?.p2pIp}"
         )
         return response
     }
 
-    private suspend fun captureSync() {
-        val captureResponse = capture() ?: return
+    private suspend fun captureSync(command: String = COMMAND_PERIODICAL_CAPTURE) {
+        val captureResponse = capture(command) ?: return
         delay(5000L)
 
         val ip = resolveDeviceIp(captureResponse.p2pIp) ?: run {
-            logWarn(COMMAND_PERIODICAL_CAPTURE, "NO_P2P_IP_AFTER_CAPTURE")
+            logWarn(command, "NO_P2P_IP_AFTER_CAPTURE")
             return
         }
         val targets = runCatching { mediaSync.fetchJpgNames(ip) }
-            .onFailure { logWarn(COMMAND_PERIODICAL_CAPTURE, "media list fetch failed ip=$ip", it) }
+            .onFailure { logWarn(command, "media list fetch failed ip=$ip", it) }
             .getOrNull()
             ?: return
-        logInfo(COMMAND_PERIODICAL_CAPTURE, "sync after capture count=${targets.size}")
-        saveTargets(ip, targets)
+        logInfo(command, "sync after capture count=${targets.size}")
+        saveTargets(ip, targets, command)
     }
 
     private suspend fun syncAllMedia() {
@@ -260,17 +269,17 @@ class HeyCyanCommandService : Service() {
         saveTargets(ip, targets, COMMAND_SYNC_MEDIA_ALL)
     }
 
-    private suspend fun periodicalCapture() {
+    private suspend fun periodicalCapture(command: String) {
         val intervalSeconds = commandIntent?.getIntExtra(EXTRA_SECONDS, DEFAULT_LOOP_SECONDS)
             ?.coerceIn(1, 24 * 60 * 60)
             ?: DEFAULT_LOOP_SECONDS
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         if (prefs.getBoolean(PREF_PERIODICAL_CAPTURE_RUNNING, false)) {
-            logWarn(COMMAND_PERIODICAL_CAPTURE, "periodical_capture already running")
+            logWarn(command, "periodical_capture already running")
             return
         }
         prefs.edit().putBoolean(PREF_PERIODICAL_CAPTURE_RUNNING, true).apply()
-        logInfo(COMMAND_PERIODICAL_CAPTURE, "periodical_capture started intervalSeconds=$intervalSeconds")
+        logInfo(command, "periodical_capture started intervalSeconds=$intervalSeconds")
 
         var cycle = 0
         val intervalMs = intervalSeconds * 1000L
@@ -278,22 +287,27 @@ class HeyCyanCommandService : Service() {
             while (scope.isActive && prefs.getBoolean(PREF_PERIODICAL_CAPTURE_RUNNING, false)) {
                 cycle++
                 val startedAt = SystemClock.elapsedRealtime()
-                logInfo(COMMAND_PERIODICAL_CAPTURE, "periodical_capture cycle started cycle=$cycle")
-                runCatching { captureSync() }
-                    .onFailure { logWarn(COMMAND_PERIODICAL_CAPTURE, "periodical_capture cycle failed cycle=$cycle", it) }
+                logInfo(command, "periodical_capture cycle started cycle=$cycle")
+                runCatching {
+                    if (command == COMMAND_PERIODICAL_CAPTURE_ONLY) {
+                        capture(command)
+                    } else {
+                        captureSync(command)
+                    }
+                }.onFailure { logWarn(command, "periodical_capture cycle failed cycle=$cycle", it) }
 
                 val elapsedMs = SystemClock.elapsedRealtime() - startedAt
                 val waitMs = (intervalMs - elapsedMs).coerceAtLeast(0L)
                 val overrunMs = (elapsedMs - intervalMs).coerceAtLeast(0L)
                 logInfo(
-                    COMMAND_PERIODICAL_CAPTURE,
+                    command,
                     "periodical_capture cycle finished cycle=$cycle elapsedMs=$elapsedMs waitMs=$waitMs overrunMs=$overrunMs"
                 )
                 waitForNextCycle(waitMs, prefs)
             }
         } finally {
             prefs.edit().putBoolean(PREF_PERIODICAL_CAPTURE_RUNNING, false).apply()
-            logInfo(COMMAND_PERIODICAL_CAPTURE, "periodical_capture stopped")
+            logInfo(command, "periodical_capture stopped")
         }
     }
 
@@ -648,6 +662,7 @@ class HeyCyanCommandService : Service() {
         const val ACTION_MEDIA_SYNC_PROGRESS = "com.sdk.glassessdksample.MEDIA_SYNC_PROGRESS"
         const val EXTRA_PROGRESS_LINE = "progress_line"
         const val COMMAND_PERIODICAL_CAPTURE = "periodical_capture"
+        const val COMMAND_PERIODICAL_CAPTURE_ONLY = "periodical_capture_only"
         const val COMMAND_PERIODICAL_CAPTURE_STOP = "periodical_capture_stop"
         const val COMMAND_SYNC_MEDIA_ALL = "sync_media_all"
         private const val NOTIFICATION_CHANNEL_ID = "heycyan_periodical_capture"

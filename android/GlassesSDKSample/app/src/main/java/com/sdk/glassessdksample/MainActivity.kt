@@ -1,7 +1,6 @@
 package com.sdk.glassessdksample
 
 import android.Manifest
-import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -10,7 +9,7 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.util.Log
+import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
@@ -20,6 +19,7 @@ import com.oudmon.ble.base.bluetooth.BleOperateManager
 import com.oudmon.ble.base.bluetooth.DeviceManager
 import com.oudmon.ble.base.communication.LargeDataHandler
 import com.sdk.glassessdksample.databinding.AcitivytMainBinding
+import com.sdk.glassessdksample.ui.BluetoothEvent
 import com.sdk.glassessdksample.ui.BluetoothUtils
 import com.sdk.glassessdksample.ui.DeviceBindActivity
 import com.sdk.glassessdksample.ui.HeyCyanCommandService
@@ -32,7 +32,8 @@ import com.sdk.glassessdksample.ui.setOnClickListener
 import com.sdk.glassessdksample.ui.startKtxActivity
 import android.widget.Toast
 import org.greenrobot.eventbus.EventBus
-import java.io.File
+import org.greenrobot.eventbus.Subscribe
+import org.greenrobot.eventbus.ThreadMode
 import java.util.ArrayDeque
 
 private const val DEVICE_INFO_BATTERY_CALLBACK = "device_info_panel"
@@ -61,14 +62,21 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        if (!EventBus.getDefault().isRegistered(this)) {
+            EventBus.getDefault().register(this)
+        }
         LocalBroadcastManager.getInstance(this).registerReceiver(
             mediaSyncProgressReceiver,
             IntentFilter(HeyCyanCommandService.ACTION_MEDIA_SYNC_PROGRESS)
         )
+        renderButtonState()
     }
 
     override fun onStop() {
         LocalBroadcastManager.getInstance(this).unregisterReceiver(mediaSyncProgressReceiver)
+        if (EventBus.getDefault().isRegistered(this)) {
+            EventBus.getDefault().unregister(this)
+        }
         super.onStop()
     }
 
@@ -115,6 +123,7 @@ class MainActivity : AppCompatActivity() {
 
         requestAllPermission(this, OnPermissionCallback { permissions, all ->  })
         refreshDeviceInfoPanel()
+        renderButtonState()
     }
 
     inner class BluetoothPermissionCallback : OnPermissionCallback {
@@ -155,6 +164,7 @@ class MainActivity : AppCompatActivity() {
                 binding.btnDisconnect -> {
                     BleOperateManager.getInstance().unBindDevice()
                     resetDeviceInfoPanel()
+                    renderButtonState()
                 }
 
                 binding.btnCamera -> {
@@ -300,6 +310,26 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+        renderButtonState()
+    }
+
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    fun onBluetoothEvent(event: BluetoothEvent) {
+        renderButtonState()
+        if (event.connect) {
+            refreshDeviceInfoPanel()
+        } else {
+            resetDeviceInfoPanel()
+        }
+    }
+
+    private fun renderButtonState(capturing: Boolean = HeyCyanCommandService.isPeriodicalCaptureRunning(this)) {
+        val connected = BleOperateManager.getInstance().isConnected
+        binding.btnScan.visibility = if (connected) View.GONE else View.VISIBLE
+        binding.btnDisconnect.visibility = if (connected) View.VISIBLE else View.GONE
+        binding.btnPeriodicalCaptureStart.visibility = if (capturing) View.GONE else View.VISIBLE
+        binding.btnPeriodicalCaptureOnlyStart.visibility = if (capturing) View.GONE else View.VISIBLE
+        binding.btnPeriodicalCaptureStop.visibility = if (capturing) View.VISIBLE else View.GONE
     }
 
     private fun resetDeviceInfoPanel() {
@@ -444,6 +474,7 @@ class MainActivity : AppCompatActivity() {
         sendCommandService(HeyCyanCommandService.COMMAND_PERIODICAL_CAPTURE) {
             putExtra(HeyCyanCommandService.EXTRA_SECONDS, seconds)
         }
+        renderButtonState(capturing = true)
         Toast.makeText(this, getString(R.string.periodical_capture_start_requested), Toast.LENGTH_SHORT).show()
     }
 
@@ -452,6 +483,7 @@ class MainActivity : AppCompatActivity() {
         sendCommandService(HeyCyanCommandService.COMMAND_PERIODICAL_CAPTURE_ONLY) {
             putExtra(HeyCyanCommandService.EXTRA_SECONDS, seconds)
         }
+        renderButtonState(capturing = true)
         Toast.makeText(this, getString(R.string.periodical_capture_only_start_requested), Toast.LENGTH_SHORT).show()
     }
 
@@ -467,6 +499,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopPeriodicalCaptureFromUi() {
         sendCommandService(HeyCyanCommandService.COMMAND_PERIODICAL_CAPTURE_STOP)
+        renderButtonState(capturing = false)
         Toast.makeText(this, getString(R.string.periodical_capture_stop_requested), Toast.LENGTH_SHORT).show()
     }
 

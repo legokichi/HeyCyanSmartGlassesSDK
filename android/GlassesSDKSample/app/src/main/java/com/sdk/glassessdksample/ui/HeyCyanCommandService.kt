@@ -676,5 +676,10 @@ class HeyCyanCommandService : Service() {
         private const val PREFS_NAME = "heycyan_command"
         private const val PREF_PERIODICAL_CAPTURE_RUNNING = "periodical_capture_running"
         private const val DEFAULT_LOOP_SECONDS = 60
+
+        fun isPeriodicalCaptureRunning(context: Context): Boolean {
+            return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(PREF_PERIODICAL_CAPTURE_RUNNING, false)
+        }
     }
 }

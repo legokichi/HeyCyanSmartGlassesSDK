@@ -1,6 +1,7 @@
 <resources>
     <string name="app_name">GlassesSDKSample</string>
     <string name="text_1">Scan</string>
+    <string name="connect">Connect</string>
     <string name="text_3">Disconnect</string>
     <string name="text_22">Connecting...</string>
     <string name="text_6">Take Photo</string>

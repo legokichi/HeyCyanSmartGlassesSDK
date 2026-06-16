@@ -589,18 +589,18 @@ class HeyCyanCommandService : Service() {
         override fun onPeersChanged(peers: Collection<WifiP2pDevice>) {
             logInfo("resolve_ip", "p2p peers count=${peers.size}")
             val target = peers.firstOrNull { peer ->
-                val name = peer.deviceName.orEmpty()
-                name.contains("Music", ignoreCase = true) ||
-                    name.contains("Cyan", ignoreCase = true) ||
-                    name.contains("Glass", ignoreCase = true)
-            } ?: peers.firstOrNull()
-            if (target != null) {
-                logInfo(
-                    "resolve_ip",
-                    "p2p connect target name=${target.deviceName} address=${target.deviceAddress}"
-                )
-                WifiP2pManagerSingleton.getInstance(applicationContext).connectToDevice(target)
+                peer.isGlassesP2pCandidate()
             }
+            if (target == null) {
+                val names = peers.joinToString(",") { it.deviceName.orEmpty().ifBlank { it.deviceAddress } }
+                logWarn("resolve_ip", "no glasses P2P peer found; ignoring peers=$names")
+                return
+            }
+            logInfo(
+                "resolve_ip",
+                "p2p connect target name=${target.deviceName} address=${target.deviceAddress}"
+            )
+            WifiP2pManagerSingleton.getInstance(applicationContext).connectToDevice(target)
         }
         override fun onThisDeviceChanged(device: WifiP2pDevice) = Unit
         override fun onConnected(info: WifiP2pInfo) {
@@ -635,6 +635,14 @@ class HeyCyanCommandService : Service() {
         override fun retryAlsoFailed() {
             logWarn("resolve_ip", "p2p retry also failed")
         }
+    }
+
+    private fun WifiP2pDevice.isGlassesP2pCandidate(): Boolean {
+        val name = deviceName.orEmpty()
+        return name.contains("MusicCam", ignoreCase = true) ||
+            name.contains("Music", ignoreCase = true) ||
+            name.contains("Cyan", ignoreCase = true) ||
+            name.contains("Glass", ignoreCase = true)
     }
 
     private val transferNotifyListener = object : GlassesDeviceNotifyListener() {

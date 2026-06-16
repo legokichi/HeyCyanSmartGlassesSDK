@@ -274,10 +274,6 @@ class HeyCyanCommandService : Service() {
             ?.coerceIn(1, 24 * 60 * 60)
             ?: DEFAULT_LOOP_SECONDS
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        if (prefs.getBoolean(PREF_PERIODICAL_CAPTURE_RUNNING, false)) {
-            logWarn(command, "periodical_capture already running")
-            return
-        }
         prefs.edit().putBoolean(PREF_PERIODICAL_CAPTURE_RUNNING, true).apply()
         logInfo(command, "periodical_capture started intervalSeconds=$intervalSeconds")
 

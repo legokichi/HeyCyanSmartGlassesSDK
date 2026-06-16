@@ -152,9 +152,9 @@ class MainActivity : AppCompatActivity() {
             binding.btnDataDownload,
             binding.btnMediaSyncLogClear,
             binding.btnRefreshDeviceInfo,
-            binding.btnPeriodicalCaptureStart,
-            binding.btnPeriodicalCaptureOnlyStart,
-            binding.btnPeriodicalCaptureStop
+            binding.btnPeriodicCaptureStart,
+            binding.btnPeriodicCaptureOnlyStart,
+            binding.btnPeriodicCaptureStop
         ) {
             when (this) {
                 binding.btnScan -> {
@@ -299,14 +299,14 @@ class MainActivity : AppCompatActivity() {
                 binding.btnRefreshDeviceInfo -> {
                     refreshDeviceInfoPanel()
                 }
-                binding.btnPeriodicalCaptureStart -> {
-                    startPeriodicalCaptureFromUi()
+                binding.btnPeriodicCaptureStart -> {
+                    startPeriodicCaptureFromUi()
                 }
-                binding.btnPeriodicalCaptureOnlyStart -> {
-                    startPeriodicalCaptureOnlyFromUi()
+                binding.btnPeriodicCaptureOnlyStart -> {
+                    startPeriodicCaptureOnlyFromUi()
                 }
-                binding.btnPeriodicalCaptureStop -> {
-                    stopPeriodicalCaptureFromUi()
+                binding.btnPeriodicCaptureStop -> {
+                    stopPeriodicCaptureFromUi()
                 }
             }
         }
@@ -323,13 +323,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun renderButtonState(capturing: Boolean = HeyCyanCommandService.isPeriodicalCaptureRunning(this)) {
+    private fun renderButtonState(capturing: Boolean = HeyCyanCommandService.isPeriodicCaptureRunning(this)) {
         val connected = BleOperateManager.getInstance().isConnected
         binding.btnScan.visibility = if (connected) View.GONE else View.VISIBLE
         binding.btnDisconnect.visibility = if (connected) View.VISIBLE else View.GONE
-        binding.btnPeriodicalCaptureStart.visibility = if (capturing) View.GONE else View.VISIBLE
-        binding.btnPeriodicalCaptureOnlyStart.visibility = if (capturing) View.GONE else View.VISIBLE
-        binding.btnPeriodicalCaptureStop.visibility = if (capturing) View.VISIBLE else View.GONE
+        binding.btnPeriodicCaptureStart.visibility = if (capturing) View.GONE else View.VISIBLE
+        binding.btnPeriodicCaptureOnlyStart.visibility = if (capturing) View.GONE else View.VISIBLE
+        binding.btnPeriodicCaptureStop.visibility = if (capturing) View.VISIBLE else View.GONE
     }
 
     private fun resetDeviceInfoPanel() {
@@ -469,38 +469,38 @@ class MainActivity : AppCompatActivity() {
         return takeUnless { it.isNullOrBlank() } ?: "--"
     }
 
-    private fun startPeriodicalCaptureFromUi() {
-        val seconds = readPeriodicalCaptureSeconds()
-        sendCommandService(HeyCyanCommandService.COMMAND_PERIODICAL_CAPTURE) {
+    private fun startPeriodicCaptureFromUi() {
+        val seconds = readPeriodicCaptureSeconds()
+        sendCommandService(HeyCyanCommandService.COMMAND_PERIODIC_CAPTURE) {
             putExtra(HeyCyanCommandService.EXTRA_SECONDS, seconds)
         }
         renderButtonState(capturing = true)
-        Toast.makeText(this, getString(R.string.periodical_capture_start_requested), Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, getString(R.string.periodic_capture_start_requested), Toast.LENGTH_SHORT).show()
     }
 
-    private fun startPeriodicalCaptureOnlyFromUi() {
-        val seconds = readPeriodicalCaptureSeconds()
-        sendCommandService(HeyCyanCommandService.COMMAND_PERIODICAL_CAPTURE_ONLY) {
+    private fun startPeriodicCaptureOnlyFromUi() {
+        val seconds = readPeriodicCaptureSeconds()
+        sendCommandService(HeyCyanCommandService.COMMAND_PERIODIC_CAPTURE_ONLY) {
             putExtra(HeyCyanCommandService.EXTRA_SECONDS, seconds)
         }
         renderButtonState(capturing = true)
-        Toast.makeText(this, getString(R.string.periodical_capture_only_start_requested), Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, getString(R.string.periodic_capture_only_start_requested), Toast.LENGTH_SHORT).show()
     }
 
-    private fun readPeriodicalCaptureSeconds(): Int {
-        val seconds = binding.inputPeriodicalCaptureInterval.text
+    private fun readPeriodicCaptureSeconds(): Int {
+        val seconds = binding.inputPeriodicCaptureInterval.text
             ?.toString()
             ?.toIntOrNull()
             ?.coerceIn(1, 86_400)
             ?: 60
-        binding.inputPeriodicalCaptureInterval.setText(seconds.toString())
+        binding.inputPeriodicCaptureInterval.setText(seconds.toString())
         return seconds
     }
 
-    private fun stopPeriodicalCaptureFromUi() {
-        sendCommandService(HeyCyanCommandService.COMMAND_PERIODICAL_CAPTURE_STOP)
+    private fun stopPeriodicCaptureFromUi() {
+        sendCommandService(HeyCyanCommandService.COMMAND_PERIODIC_CAPTURE_STOP)
         renderButtonState(capturing = false)
-        Toast.makeText(this, getString(R.string.periodical_capture_stop_requested), Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, getString(R.string.periodic_capture_stop_requested), Toast.LENGTH_SHORT).show()
     }
 
     private fun sendCommandService(command: String, configure: Intent.() -> Unit = {}) {

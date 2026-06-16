@@ -14,12 +14,12 @@
     <string name="device_info_title">Device info</string>
     <string name="device_info_refresh">Refresh device info</string>
     <string name="device_info_placeholder">Connect glasses over BLE to load device information.</string>
-    <string name="periodical_capture_title">Periodical capture</string>
-    <string name="periodical_capture_interval_label">Interval seconds</string>
-    <string name="periodical_capture_start">Start and sync</string>
-    <string name="periodical_capture_only_start">Start capture only</string>
-    <string name="periodical_capture_stop">Stop</string>
-    <string name="periodical_capture_start_requested">Periodical capture start requested</string>
-    <string name="periodical_capture_only_start_requested">Periodical capture-only start requested</string>
-    <string name="periodical_capture_stop_requested">Periodical capture stop requested</string>
+    <string name="periodic_capture_title">Periodic capture</string>
+    <string name="periodic_capture_interval_label">Interval seconds</string>
+    <string name="periodic_capture_start">Start and sync</string>
+    <string name="periodic_capture_only_start">Start capture only</string>
+    <string name="periodic_capture_stop">Stop</string>
+    <string name="periodic_capture_start_requested">Periodic capture start requested</string>
+    <string name="periodic_capture_only_start_requested">Periodic capture-only start requested</string>
+    <string name="periodic_capture_stop_requested">Periodic capture stop requested</string>
 </resources>

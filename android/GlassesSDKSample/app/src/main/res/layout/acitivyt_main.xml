@@ -129,17 +129,17 @@
             android:text="@string/device_info_refresh" />
 
         <TextView
-            android:id="@+id/text_periodical_capture_title"
+            android:id="@+id/text_periodic_capture_title"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginStart="@dimen/qc_dp_16"
             android:layout_marginTop="@dimen/qc_dp_24"
             android:layout_marginEnd="@dimen/qc_dp_16"
-            android:text="@string/periodical_capture_title"
+            android:text="@string/periodic_capture_title"
             android:textStyle="bold" />
 
         <LinearLayout
-            android:id="@+id/layout_periodical_capture_controls"
+            android:id="@+id/layout_periodic_capture_controls"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginStart="@dimen/qc_dp_16"
@@ -154,14 +154,14 @@
                 android:orientation="horizontal">
 
                 <TextView
-                    android:id="@+id/text_periodical_capture_interval_label"
+                    android:id="@+id/text_periodic_capture_interval_label"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="@string/periodical_capture_interval_label" />
+                    android:text="@string/periodic_capture_interval_label" />
 
                 <EditText
-                    android:id="@+id/input_periodical_capture_interval"
+                    android:id="@+id/input_periodic_capture_interval"
                     android:layout_width="@dimen/qc_dp_80"
                     android:layout_height="wrap_content"
                     android:autofillHints=""
@@ -177,27 +177,27 @@
                 android:orientation="horizontal">
 
                 <Button
-                    android:id="@+id/btn_periodical_capture_start"
+                    android:id="@+id/btn_periodic_capture_start"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="@string/periodical_capture_start" />
+                    android:text="@string/periodic_capture_start" />
 
                 <Button
-                    android:id="@+id/btn_periodical_capture_only_start"
+                    android:id="@+id/btn_periodic_capture_only_start"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="@dimen/qc_dp_8"
                     android:layout_weight="1"
-                    android:text="@string/periodical_capture_only_start" />
+                    android:text="@string/periodic_capture_only_start" />
             </LinearLayout>
 
             <Button
-                android:id="@+id/btn_periodical_capture_stop"
+                android:id="@+id/btn_periodic_capture_stop"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/qc_dp_8"
-                android:text="@string/periodical_capture_stop" />
+                android:text="@string/periodic_capture_stop" />
         </LinearLayout>
     </LinearLayout>
 

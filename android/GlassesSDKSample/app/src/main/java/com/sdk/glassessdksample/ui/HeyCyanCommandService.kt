@@ -279,11 +279,14 @@ class HeyCyanCommandService : Service() {
 
         var cycle = 0
         val intervalMs = intervalSeconds * 1000L
+        var nextStartAt = SystemClock.elapsedRealtime()
         try {
             while (scope.isActive && prefs.getBoolean(PREF_PERIODICAL_CAPTURE_RUNNING, false)) {
                 cycle++
+                val scheduledAt = nextStartAt
                 val startedAt = SystemClock.elapsedRealtime()
-                logInfo(command, "periodical_capture cycle started cycle=$cycle")
+                val lateMs = (startedAt - scheduledAt).coerceAtLeast(0L)
+                logInfo(command, "periodical_capture cycle started cycle=$cycle lateMs=$lateMs")
                 runCatching {
                     if (command == COMMAND_PERIODICAL_CAPTURE_ONLY) {
                         capture(command)
@@ -293,11 +296,18 @@ class HeyCyanCommandService : Service() {
                 }.onFailure { logWarn(command, "periodical_capture cycle failed cycle=$cycle", it) }
 
                 val elapsedMs = SystemClock.elapsedRealtime() - startedAt
-                val waitMs = (intervalMs - elapsedMs).coerceAtLeast(0L)
+                nextStartAt = scheduledAt + intervalMs
+                var skippedCycles = 0
+                val finishedAt = SystemClock.elapsedRealtime()
+                while (nextStartAt <= finishedAt) {
+                    nextStartAt += intervalMs
+                    skippedCycles++
+                }
+                val waitMs = (nextStartAt - finishedAt).coerceAtLeast(0L)
                 val overrunMs = (elapsedMs - intervalMs).coerceAtLeast(0L)
                 logInfo(
                     command,
-                    "periodical_capture cycle finished cycle=$cycle elapsedMs=$elapsedMs waitMs=$waitMs overrunMs=$overrunMs"
+                    "periodical_capture cycle finished cycle=$cycle elapsedMs=$elapsedMs waitMs=$waitMs overrunMs=$overrunMs skippedCycles=$skippedCycles"
                 )
                 waitForNextCycle(waitMs, prefs)
             }

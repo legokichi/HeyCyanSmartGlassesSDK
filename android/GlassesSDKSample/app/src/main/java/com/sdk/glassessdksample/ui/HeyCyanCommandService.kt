@@ -568,7 +568,7 @@ class HeyCyanCommandService : Service() {
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "HeyCyan:Command").apply {
             setReferenceCounted(false)
-            acquire(WAKE_LOCK_TIMEOUT_MS)
+            acquire()
         }
     }
 
@@ -670,6 +670,5 @@ class HeyCyanCommandService : Service() {
         private const val PREFS_NAME = "heycyan_command"
         private const val PREF_PERIODICAL_CAPTURE_RUNNING = "periodical_capture_running"
         private const val DEFAULT_LOOP_SECONDS = 60
-        private const val WAKE_LOCK_TIMEOUT_MS = 10 * 60 * 1000L
     }
 }

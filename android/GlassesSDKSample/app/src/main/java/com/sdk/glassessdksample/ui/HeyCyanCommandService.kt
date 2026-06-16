@@ -17,6 +17,7 @@ import android.util.Log
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.core.app.NotificationCompat
 import com.oudmon.ble.base.bluetooth.BleOperateManager
+import com.oudmon.ble.base.bluetooth.DeviceManager
 import com.oudmon.ble.base.communication.LargeDataHandler
 import com.oudmon.ble.base.communication.bigData.resp.GlassModelControlResponse
 import com.oudmon.ble.base.communication.bigData.resp.GlassesDeviceNotifyListener
@@ -37,6 +38,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
+import java.util.Locale
 
 class HeyCyanCommandService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -588,12 +590,10 @@ class HeyCyanCommandService : Service() {
         override fun onWifiP2pDisabled() = Unit
         override fun onPeersChanged(peers: Collection<WifiP2pDevice>) {
             logInfo("resolve_ip", "p2p peers count=${peers.size}")
-            val target = peers.firstOrNull { peer ->
-                peer.isGlassesP2pCandidate()
-            }
+            val target = selectBestGlassesP2pPeer(peers)
             if (target == null) {
-                val names = peers.joinToString(",") { it.deviceName.orEmpty().ifBlank { it.deviceAddress } }
-                logWarn("resolve_ip", "no glasses P2P peer found; ignoring peers=$names")
+                val peerSummary = peers.joinToString(",") { it.toPeerLogString() }
+                logWarn("resolve_ip", "no unambiguous glasses P2P peer found; ignoring peers=$peerSummary")
                 return
             }
             logInfo(
@@ -637,13 +637,85 @@ class HeyCyanCommandService : Service() {
         }
     }
 
-    private fun WifiP2pDevice.isGlassesP2pCandidate(): Boolean {
-        val name = deviceName.orEmpty()
-        return name.contains("MusicCam", ignoreCase = true) ||
-            name.contains("Music", ignoreCase = true) ||
-            name.contains("Cyan", ignoreCase = true) ||
-            name.contains("Glass", ignoreCase = true)
+    private fun selectBestGlassesP2pPeer(peers: Collection<WifiP2pDevice>): WifiP2pDevice? {
+        // The Android SDK guide documents BLE scan/connect and media-count commands, but not
+        // how to identify the glasses among Android Wi-Fi Direct peers. Avoid connecting to
+        // arbitrary peers; use the practical signals observed in device logs and in
+        // Alternative-HeyCyan-App-and-SDK's MainActivity.kt peer selection:
+        // https://github.com/legokichi/Alternative-HeyCyan-App-and-SDK/blob/main/android/CyanBridge/app/src/main/java/com/fersaiyan/cyanbridge/MainActivity.kt
+        val scoredPeers = peers.mapNotNull { peer ->
+            peer.scoreAsGlassesP2pPeer()?.let { score ->
+                ScoredP2pPeer(peer, score)
+            }
+        }
+        if (scoredPeers.isEmpty()) return null
+
+        scoredPeers
+            .joinToString(",") { "${it.peer.toPeerLogString()}/score=${it.score.value}/${it.score.reason}" }
+            .let { logInfo("resolve_ip", "glasses P2P candidates=$it") }
+
+        val bestScore = scoredPeers.maxOf { it.score.value }
+        val bestPeers = scoredPeers.filter { it.score.value == bestScore }
+        if (bestPeers.size != 1) {
+            val tied = bestPeers.joinToString(",") { it.peer.toPeerLogString() }
+            logWarn("resolve_ip", "ambiguous glasses P2P peers score=$bestScore peers=$tied")
+            return null
+        }
+        return bestPeers.single().peer
     }
+
+    private fun WifiP2pDevice.scoreAsGlassesP2pPeer(): P2pPeerScore? {
+        val name = deviceName.orEmpty()
+        val normalized = name.uppercase(Locale.US)
+        if (normalized.isBlank()) return null
+        if (isKnownNonGlassesP2pPeer(normalized)) return null
+
+        val bleMacNoColon = currentBleMacNoColonUpper()
+        if (!bleMacNoColon.isNullOrBlank() && normalized.contains(bleMacNoColon)) {
+            return P2pPeerScore(100, "ble_mac_token")
+        }
+        if (normalized.startsWith("MUSICCAM")) {
+            return P2pPeerScore(90, "musiccam_prefix")
+        }
+        if (normalized.startsWith("AIM") || normalized.contains("AIMB-")) {
+            return P2pPeerScore(80, "aim_name")
+        }
+        if (normalized.contains("GLASS") || normalized.contains("CYAN")) {
+            return P2pPeerScore(70, "glasses_name")
+        }
+        if (normalized.contains("MUSIC") && HEX_12_REGEX.containsMatchIn(normalized)) {
+            return P2pPeerScore(60, "music_hex_token")
+        }
+        return null
+    }
+
+    private fun currentBleMacNoColonUpper(): String? {
+        return runCatching {
+            DeviceManager.getInstance().deviceAddress
+                ?.replace(":", "")
+                ?.uppercase(Locale.US)
+                ?.takeIf { it.isNotBlank() }
+        }.getOrNull()
+    }
+
+    private fun isKnownNonGlassesP2pPeer(normalizedName: String): Boolean {
+        return normalizedName.startsWith("DIRECT-") &&
+            (normalizedName.contains("HP") ||
+                normalizedName.contains("EPSON") ||
+                normalizedName.contains("PRINTER") ||
+                normalizedName.contains("PIXMA") ||
+                normalizedName.contains("BROTHER") ||
+                normalizedName.contains("CANON"))
+    }
+
+    private fun WifiP2pDevice.toPeerLogString(): String {
+        val name = deviceName.orEmpty().ifBlank { "<blank>" }
+        return "name=$name address=$deviceAddress type=$primaryDeviceType status=$status"
+    }
+
+    private data class P2pPeerScore(val value: Int, val reason: String)
+
+    private data class ScoredP2pPeer(val peer: WifiP2pDevice, val score: P2pPeerScore)
 
     private val transferNotifyListener = object : GlassesDeviceNotifyListener() {
         override fun parseData(cmdType: Int, response: GlassesDeviceNotifyRsp) {
@@ -684,6 +756,7 @@ class HeyCyanCommandService : Service() {
         private const val PREFS_NAME = "heycyan_command"
         private const val PREF_PERIODIC_CAPTURE_RUNNING = "periodic_capture_running"
         private const val DEFAULT_LOOP_SECONDS = 60
+        private val HEX_12_REGEX = Regex("[A-F0-9]{12}")
 
         fun isPeriodicCaptureRunning(context: Context): Boolean {
             return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

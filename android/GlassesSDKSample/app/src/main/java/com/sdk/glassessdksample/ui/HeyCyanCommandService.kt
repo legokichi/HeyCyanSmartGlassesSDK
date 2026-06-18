@@ -89,6 +89,18 @@ class HeyCyanCommandService : Service() {
                 }
                 START_NOT_STICKY
             }
+            COMMAND_SYNC_MEDIA_ALL_BATCHED_DELETE -> {
+                scope.launch {
+                    try {
+                        syncAllMediaBatchedDelete()
+                    } finally {
+                        unregisterTransferNotifyListener()
+                        unregisterP2pReceiver()
+                        stopSelf(startId)
+                    }
+                }
+                START_NOT_STICKY
+            }
             else -> {
                 logWarn(command.ifBlank { "unknown" }, "unsupported service command")
                 stopSelf(startId)
@@ -271,6 +283,90 @@ class HeyCyanCommandService : Service() {
         saveTargets(ip, targets, COMMAND_SYNC_MEDIA_ALL)
     }
 
+    private suspend fun syncAllMediaBatchedDelete() {
+        if (!BleOperateManager.getInstance().isConnected) {
+            logWarn(COMMAND_SYNC_MEDIA_ALL_BATCHED_DELETE, "BLE_NOT_CONNECTED")
+            return
+        }
+
+        var currentIp = resolveDeviceIp(null) ?: run {
+            logWarn(COMMAND_SYNC_MEDIA_ALL_BATCHED_DELETE, "NO_P2P_IP")
+            return
+        }
+        val mediaConfig = runCatching { mediaSync.fetchMediaConfig(currentIp) }
+            .onFailure {
+                logWarn(
+                    COMMAND_SYNC_MEDIA_ALL_BATCHED_DELETE,
+                    "media list fetch failed ip=$currentIp",
+                    it
+                )
+            }
+            .getOrNull()
+            ?: return
+        logInfo(COMMAND_SYNC_MEDIA_ALL_BATCHED_DELETE, "media.config raw=${mediaConfig.raw.toLogPreview()}")
+
+        val targets = mediaConfig.fileNames.toList()
+        if (targets.isEmpty()) {
+            logInfo(COMMAND_SYNC_MEDIA_ALL_BATCHED_DELETE, "no files to save")
+            return
+        }
+
+        val batches = targets.chunked(BATCHED_DELETE_SIZE)
+        var totalSaved = 0
+        var totalDeleteRequested = 0
+        var totalDeleteRequestFailed = 0
+        logInfo(
+            COMMAND_SYNC_MEDIA_ALL_BATCHED_DELETE,
+            "sync all media batched count=${targets.size} batchSize=$BATCHED_DELETE_SIZE batches=${batches.size}"
+        )
+
+        for ((index, batch) in batches.withIndex()) {
+            if (index > 0) {
+                val nextIp = resolveDeviceIp(null)
+                if (nextIp == null) {
+                    logWarn(
+                        COMMAND_SYNC_MEDIA_ALL_BATCHED_DELETE,
+                        "NO_P2P_IP before batch=${index + 1}; stopping"
+                    )
+                    break
+                }
+                currentIp = nextIp
+            }
+
+            val batchSet = batch.toCollection(linkedSetOf())
+            logInfo(
+                COMMAND_SYNC_MEDIA_ALL_BATCHED_DELETE,
+                "batch started batch=${index + 1}/${batches.size} count=${batchSet.size} files=${batchSet.joinToString(",")}"
+            )
+            val savedFiles = saveOnly(currentIp, batchSet, COMMAND_SYNC_MEDIA_ALL_BATCHED_DELETE)
+            totalSaved += savedFiles.size
+
+            if (savedFiles.isEmpty()) {
+                logWarn(
+                    COMMAND_SYNC_MEDIA_ALL_BATCHED_DELETE,
+                    "batch saved no files batch=${index + 1}; skipping delete"
+                )
+                continue
+            }
+
+            // download2 deletes only the files saved in the current batch. This avoids deleting
+            // a full media.config manifest if a later batch fails to save.
+            prepareRemoteDelete(COMMAND_SYNC_MEDIA_ALL_BATCHED_DELETE)
+            val deleteResult = deleteSavedFiles(savedFiles, COMMAND_SYNC_MEDIA_ALL_BATCHED_DELETE)
+            totalDeleteRequested += deleteResult.requested
+            totalDeleteRequestFailed += deleteResult.failed
+            logInfo(
+                COMMAND_SYNC_MEDIA_ALL_BATCHED_DELETE,
+                "batch finished batch=${index + 1}/${batches.size} saved=${savedFiles.size} deleteRequested=${deleteResult.requested} deleteRequestFailed=${deleteResult.failed}"
+            )
+        }
+
+        logInfo(
+            COMMAND_SYNC_MEDIA_ALL_BATCHED_DELETE,
+            "batched sync summary saved=$totalSaved deleteRequested=$totalDeleteRequested deleteRequestFailed=$totalDeleteRequestFailed"
+        )
+    }
+
     private suspend fun periodicCapture(command: String) {
         val intervalSeconds = commandIntent?.getIntExtra(EXTRA_SECONDS, DEFAULT_LOOP_SECONDS)
             ?.coerceIn(1, 24 * 60 * 60)
@@ -377,8 +473,6 @@ class HeyCyanCommandService : Service() {
             return
         }
         val savedFiles = saveOnly(ip, targets, command)
-        var deleteRequested = 0
-        var deleteRequestFailed = 0
 
         if (savedFiles.isNotEmpty()) {
             // Download the batch first, then leave Wi-Fi transfer mode before issuing BLE deletes.
@@ -386,6 +480,24 @@ class HeyCyanCommandService : Service() {
             prepareRemoteDelete(command)
         }
 
+        val deleteResult = deleteSavedFiles(savedFiles, command)
+        logInfo(
+            command,
+            "sync summary saved=${savedFiles.size} deleteRequested=${deleteResult.requested} deleteRequestFailed=${deleteResult.failed}"
+        )
+    }
+
+    private data class DeleteResult(
+        val requested: Int,
+        val failed: Int
+    )
+
+    private suspend fun deleteSavedFiles(
+        savedFiles: List<String>,
+        command: String
+    ): DeleteResult {
+        var deleteRequested = 0
+        var deleteRequestFailed = 0
         savedFiles.forEach { fileName ->
             logInfo(command, "requesting remote delete file=$fileName")
             runCatching { mediaSync.requestDelete(fileName) }
@@ -403,10 +515,7 @@ class HeyCyanCommandService : Service() {
                     logWarn(command, "remote delete request threw file=$fileName", it)
                 }
         }
-        logInfo(
-            command,
-            "sync summary saved=${savedFiles.size} deleteRequested=$deleteRequested deleteRequestFailed=$deleteRequestFailed"
-        )
+        return DeleteResult(deleteRequested, deleteRequestFailed)
     }
 
     private suspend fun prepareRemoteDelete(command: String) {
@@ -751,11 +860,13 @@ class HeyCyanCommandService : Service() {
         const val COMMAND_PERIODIC_CAPTURE_ONLY = "periodic_capture_only"
         const val COMMAND_PERIODIC_CAPTURE_STOP = "periodic_capture_stop"
         const val COMMAND_SYNC_MEDIA_ALL = "sync_media_all"
+        const val COMMAND_SYNC_MEDIA_ALL_BATCHED_DELETE = "download2"
         private const val NOTIFICATION_CHANNEL_ID = "heycyan_periodic_capture"
         private const val NOTIFICATION_ID = 1001
         private const val PREFS_NAME = "heycyan_command"
         private const val PREF_PERIODIC_CAPTURE_RUNNING = "periodic_capture_running"
         private const val DEFAULT_LOOP_SECONDS = 60
+        private const val BATCHED_DELETE_SIZE = 10
         private val HEX_12_REGEX = Regex("[A-F0-9]{12}")
 
         fun isPeriodicCaptureRunning(context: Context): Boolean {

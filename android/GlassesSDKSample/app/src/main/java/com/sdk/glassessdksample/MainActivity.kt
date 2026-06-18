@@ -150,6 +150,7 @@ class MainActivity : AppCompatActivity() {
             binding.btnVideo,
             binding.btnRecord,
             binding.btnDataDownload,
+            binding.btnDataDownload2,
             binding.btnMediaSyncLogClear,
             binding.btnRefreshDeviceInfo,
             binding.btnPeriodicCaptureStart,
@@ -271,27 +272,10 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 binding.btnDataDownload -> {
-                    // 检查并请求必要的权限
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        // Android 13+ 需要 NEARBY_WIFI_DEVICES 权限
-                        requestNearbyWifiDevicesPermission(this@MainActivity, object : OnPermissionCallback {
-                            override fun onGranted(permissions: MutableList<String>, all: Boolean) {
-                                if (all) {
-                                    startMediaSyncAllFromUi()
-                                }
-                            }
-
-                            override fun onDenied(permissions: MutableList<String>, never: Boolean) {
-                                super.onDenied(permissions, never)
-                                if (never) {
-                                    XXPermissions.startPermissionActivity(this@MainActivity, permissions)
-                                }
-                            }
-                        })
-                    } else {
-                        // Android 12 及以下版本直接启动下载
-                        startMediaSyncAllFromUi()
-                    }
+                    runWithNearbyWifiPermission { startMediaSyncAllFromUi() }
+                }
+                binding.btnDataDownload2 -> {
+                    runWithNearbyWifiPermission { startMediaSyncBatchedDeleteFromUi() }
                 }
                 binding.btnMediaSyncLogClear -> {
                     clearMediaSyncLog()
@@ -511,10 +495,37 @@ class MainActivity : AppCompatActivity() {
         startService(intent)
     }
 
+    private fun runWithNearbyWifiPermission(action: () -> Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            requestNearbyWifiDevicesPermission(this@MainActivity, object : OnPermissionCallback {
+                override fun onGranted(permissions: MutableList<String>, all: Boolean) {
+                    if (all) {
+                        action()
+                    }
+                }
+
+                override fun onDenied(permissions: MutableList<String>, never: Boolean) {
+                    super.onDenied(permissions, never)
+                    if (never) {
+                        XXPermissions.startPermissionActivity(this@MainActivity, permissions)
+                    }
+                }
+            })
+        } else {
+            action()
+        }
+    }
+
     private fun startMediaSyncAllFromUi() {
         clearMediaSyncLog()
         appendMediaSyncLog("Starting media sync")
         sendCommandService(HeyCyanCommandService.COMMAND_SYNC_MEDIA_ALL)
+    }
+
+    private fun startMediaSyncBatchedDeleteFromUi() {
+        clearMediaSyncLog()
+        appendMediaSyncLog("Starting media sync download2")
+        sendCommandService(HeyCyanCommandService.COMMAND_SYNC_MEDIA_ALL_BATCHED_DELETE)
     }
 
     private fun clearMediaSyncLog() {

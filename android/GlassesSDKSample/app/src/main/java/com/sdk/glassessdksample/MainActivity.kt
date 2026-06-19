@@ -35,6 +35,9 @@ import org.greenrobot.eventbus.EventBus
 import org.greenrobot.eventbus.Subscribe
 import org.greenrobot.eventbus.ThreadMode
 import java.util.ArrayDeque
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private const val DEVICE_INFO_BATTERY_CALLBACK = "device_info_panel"
 private const val MEDIA_SYNC_LOG_MAX_LINES = 100
@@ -45,6 +48,7 @@ class MainActivity : AppCompatActivity() {
     private var deviceInfoBatteryText = "--"
     private var deviceInfoVolumeText = "--"
     private var deviceInfoMediaCountText = "--"
+    private var deviceInfoTimeSyncText = "--"
     private val mediaSyncLogLines = ArrayDeque<String>()
     private val mediaSyncProgressReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -321,6 +325,7 @@ class MainActivity : AppCompatActivity() {
         deviceInfoBatteryText = "--"
         deviceInfoVolumeText = "--"
         deviceInfoMediaCountText = "--"
+        deviceInfoTimeSyncText = "--"
         renderDeviceInfoPanel()
     }
 
@@ -333,6 +338,7 @@ class MainActivity : AppCompatActivity() {
         deviceInfoBatteryText = "Loading..."
         deviceInfoVolumeText = "Loading..."
         deviceInfoMediaCountText = "Loading..."
+        deviceInfoTimeSyncText = "Syncing..."
         renderDeviceInfoPanel()
         requestDeviceVersions()
         requestDeviceBattery()
@@ -417,7 +423,11 @@ class MainActivity : AppCompatActivity() {
             renderDeviceInfoPanel()
             return
         }
-        LargeDataHandler.getInstance().syncTime { _, _ -> }
+        val requestedAt = System.currentTimeMillis()
+        LargeDataHandler.getInstance().syncTime { _, _ ->
+            deviceInfoTimeSyncText = "Requested at ${requestedAt.toTimeSyncString()}"
+            runOnUiThread { renderDeviceInfoPanel() }
+        }
     }
 
     private fun renderDeviceInfoPanel() {
@@ -444,9 +454,16 @@ class MainActivity : AppCompatActivity() {
                 deviceInfoVolumeText,
                 "",
                 "Undownloaded media:",
-                deviceInfoMediaCountText
+                deviceInfoMediaCountText,
+                "",
+                "Time sync:",
+                deviceInfoTimeSyncText
             ).joinToString("\n")
         }
+    }
+
+    private fun Long.toTimeSyncString(): String {
+        return SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(this))
     }
 
     private fun String?.orDash(): String {

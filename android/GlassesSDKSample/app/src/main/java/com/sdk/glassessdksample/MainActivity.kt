@@ -7,8 +7,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -31,9 +33,21 @@ import com.sdk.glassessdksample.ui.requestNearbyWifiDevicesPermission
 import com.sdk.glassessdksample.ui.setOnClickListener
 import com.sdk.glassessdksample.ui.startKtxActivity
 import android.widget.Toast
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.greenrobot.eventbus.EventBus
 import org.greenrobot.eventbus.Subscribe
 import org.greenrobot.eventbus.ThreadMode
+import java.io.ByteArrayOutputStream
 import java.util.ArrayDeque
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -41,6 +55,8 @@ import java.util.Locale
 
 private const val DEVICE_INFO_BATTERY_CALLBACK = "device_info_panel"
 private const val MEDIA_SYNC_LOG_MAX_LINES = 100
+private const val THUMBNAIL_PREVIEW_INTERVAL_MS = 2000L
+private const val THUMBNAIL_CAPTURE_TIMEOUT_MS = 8000L
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: AcitivytMainBinding
@@ -50,6 +66,9 @@ class MainActivity : AppCompatActivity() {
     private var deviceInfoMediaCountText = "--"
     private var deviceInfoTimeSyncText = "--"
     private val mediaSyncLogLines = ArrayDeque<String>()
+    private val thumbnailPreviewScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var thumbnailPreviewLoopJob: Job? = null
+    private var thumbnailPreviewCaptureJob: Job? = null
     private val mediaSyncProgressReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             val line = intent.getStringExtra(HeyCyanCommandService.EXTRA_PROGRESS_LINE) ?: return
@@ -82,6 +101,11 @@ class MainActivity : AppCompatActivity() {
             EventBus.getDefault().unregister(this)
         }
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        thumbnailPreviewScope.cancel()
+        super.onDestroy()
     }
 
     inner class PermissionCallback : OnPermissionCallback {
@@ -155,6 +179,8 @@ class MainActivity : AppCompatActivity() {
             binding.btnRecord,
             binding.btnDataDownload,
             binding.btnDataDownload2,
+            binding.btnThumbnailPreviewStart,
+            binding.btnThumbnailPreviewStop,
             binding.btnMediaSyncLogClear,
             binding.btnRefreshDeviceInfo,
             binding.btnPeriodicCaptureStart,
@@ -281,6 +307,12 @@ class MainActivity : AppCompatActivity() {
                 binding.btnDataDownload2 -> {
                     runWithNearbyWifiPermission { startMediaSyncBatchedDeleteFromUi() }
                 }
+                binding.btnThumbnailPreviewStart -> {
+                    startThumbnailPreview()
+                }
+                binding.btnThumbnailPreviewStop -> {
+                    stopThumbnailPreview()
+                }
                 binding.btnMediaSyncLogClear -> {
                     clearMediaSyncLog()
                 }
@@ -307,6 +339,7 @@ class MainActivity : AppCompatActivity() {
         if (event.connect) {
             refreshDeviceInfoPanel()
         } else {
+            stopThumbnailPreview()
             resetDeviceInfoPanel()
         }
     }
@@ -318,6 +351,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnPeriodicCaptureStart.visibility = if (capturing) View.GONE else View.VISIBLE
         binding.btnPeriodicCaptureOnlyStart.visibility = if (capturing) View.GONE else View.VISIBLE
         binding.btnPeriodicCaptureStop.visibility = if (capturing) View.VISIBLE else View.GONE
+        renderThumbnailPreviewButtons()
     }
 
     private fun resetDeviceInfoPanel() {
@@ -427,6 +461,99 @@ class MainActivity : AppCompatActivity() {
         LargeDataHandler.getInstance().syncTime { _, _ ->
             deviceInfoTimeSyncText = "Requested at ${requestedAt.toTimeSyncString()}"
             runOnUiThread { renderDeviceInfoPanel() }
+        }
+    }
+
+    private fun startThumbnailPreview() {
+        if (thumbnailPreviewLoopJob?.isActive == true) {
+            binding.textThumbnailPreviewStatus.text = "Preview already running."
+            return
+        }
+        if (!BleOperateManager.getInstance().isConnected) {
+            binding.textThumbnailPreviewStatus.text = "Connect glasses over BLE first."
+            return
+        }
+        binding.textThumbnailPreviewStatus.text = "Preview running."
+        renderThumbnailPreviewButtons(running = true)
+        thumbnailPreviewLoopJob = thumbnailPreviewScope.launch {
+            while (isActive) {
+                val tickStartedAt = SystemClock.elapsedRealtime()
+                if (thumbnailPreviewCaptureJob?.isActive == true) {
+                    binding.textThumbnailPreviewStatus.text = "Previous thumbnail capture still running; skipping tick."
+                } else {
+                    thumbnailPreviewCaptureJob = launch {
+                        captureAndShowThumbnail()
+                    }
+                }
+                val elapsed = SystemClock.elapsedRealtime() - tickStartedAt
+                delay((THUMBNAIL_PREVIEW_INTERVAL_MS - elapsed).coerceAtLeast(0L))
+            }
+        }
+    }
+
+    private fun stopThumbnailPreview() {
+        thumbnailPreviewLoopJob?.cancel()
+        thumbnailPreviewCaptureJob?.cancel()
+        thumbnailPreviewLoopJob = null
+        thumbnailPreviewCaptureJob = null
+        binding.textThumbnailPreviewStatus.text = getString(R.string.thumbnail_preview_idle)
+        renderThumbnailPreviewButtons(running = false)
+    }
+
+    private fun renderThumbnailPreviewButtons(running: Boolean = thumbnailPreviewLoopJob?.isActive == true) {
+        binding.btnThumbnailPreviewStart.visibility = if (running) View.GONE else View.VISIBLE
+        binding.btnThumbnailPreviewStop.visibility = if (running) View.VISIBLE else View.GONE
+    }
+
+    private suspend fun captureAndShowThumbnail() {
+        if (!BleOperateManager.getInstance().isConnected) {
+            binding.textThumbnailPreviewStatus.text = "BLE disconnected."
+            stopThumbnailPreview()
+            return
+        }
+        binding.textThumbnailPreviewStatus.text = "Capturing thumbnail..."
+        val bytes = withContext(Dispatchers.IO) { captureAiThumbnailBytes() }
+        if (bytes == null) {
+            binding.textThumbnailPreviewStatus.text = "Thumbnail capture timed out or returned empty data."
+            return
+        }
+        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        if (bitmap == null) {
+            binding.textThumbnailPreviewStatus.text = "Thumbnail decode failed (${bytes.size} bytes)."
+            return
+        }
+        binding.imageThumbnailPreview.setImageBitmap(bitmap)
+        binding.textThumbnailPreviewStatus.text =
+            "Updated at ${System.currentTimeMillis().toTimeSyncString()} (${bytes.size} bytes)."
+    }
+
+    private suspend fun captureAiThumbnailBytes(): ByteArray? {
+        return withTimeoutOrNull(THUMBNAIL_CAPTURE_TIMEOUT_MS) {
+            val out = ByteArrayOutputStream()
+            val done = CompletableDeferred<ByteArray?>()
+            var gotChunk = false
+            val callback: (Int, Boolean, ByteArray?) -> Unit = { _, isComplete, data ->
+                if (data != null && data.isNotEmpty()) {
+                    gotChunk = true
+                    out.write(data)
+                }
+                if (isComplete && !done.isCompleted) {
+                    done.complete(out.toByteArray().takeIf { it.isNotEmpty() })
+                }
+            }
+
+            // Same thumbnail path used by Alternative-HeyCyan-App-and-SDK: put glasses in AI
+            // thumbnail mode, trigger capture, then read BLE thumbnail chunks.
+            LargeDataHandler.getInstance().glassesControl(byteArrayOf(0x02, 0x01, 0x06, 0x02, 0x02)) { _, _ -> }
+            delay(250L)
+            LargeDataHandler.getInstance().glassesControl(byteArrayOf(0x02, 0x01, 0x01)) { _, _ -> }
+            delay(2500L)
+            LargeDataHandler.getInstance().getPictureThumbnails(callback)
+            delay(1500L)
+            if (!gotChunk && !done.isCompleted) {
+                LargeDataHandler.getInstance().getPictureThumbnails(callback)
+            }
+            done.await()
         }
     }
 

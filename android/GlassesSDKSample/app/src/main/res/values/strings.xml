@@ -9,6 +9,10 @@
     <string name="text_8">Record Audio</string>
     <string name="text_15">Download Media</string>
     <string name="text_download2">Download Media 10-by-10</string>
+    <string name="thumbnail_preview_title">Thumbnail preview</string>
+    <string name="thumbnail_preview_idle">Preview stopped.</string>
+    <string name="thumbnail_preview_start">Start preview</string>
+    <string name="thumbnail_preview_stop">Stop preview</string>
     <string name="media_sync_log_title">Media sync log</string>
     <string name="media_sync_log_placeholder">No media sync logs yet.</string>
     <string name="media_sync_log_clear">Clear log</string>

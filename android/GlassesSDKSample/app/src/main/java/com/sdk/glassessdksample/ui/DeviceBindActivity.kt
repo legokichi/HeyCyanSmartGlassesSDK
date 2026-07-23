@@ -74,7 +74,7 @@ class DeviceBindActivity : BaseActivity() {
         binding.run {
             deviceRcv.layoutManager = LinearLayoutManager(this@DeviceBindActivity)
             deviceRcv.adapter = adapter
-            titleBar.tvTitle.text="扫描"
+            titleBar.tvTitle.text = "Scan"
             titleBar.ivNavigateBefore.setOnClickListener {
                 finish()
             }

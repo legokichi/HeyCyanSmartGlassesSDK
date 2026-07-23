@@ -1,26 +1,30 @@
 package com.sdk.glassessdksample
 
 import android.Manifest
-import android.app.Activity
 import android.bluetooth.BluetoothAdapter
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Bundle
-import android.util.Log
-import androidx.annotation.RequiresApi
+import android.os.SystemClock
+import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.hjq.permissions.OnPermissionCallback
 import com.hjq.permissions.XXPermissions
 import com.oudmon.ble.base.bluetooth.BleOperateManager
 import com.oudmon.ble.base.bluetooth.DeviceManager
 import com.oudmon.ble.base.communication.LargeDataHandler
-import com.oudmon.ble.base.communication.bigData.resp.GlassesDeviceNotifyListener
-import com.oudmon.ble.base.communication.bigData.resp.GlassesDeviceNotifyRsp
 import com.sdk.glassessdksample.databinding.AcitivytMainBinding
+import com.sdk.glassessdksample.ui.BluetoothEvent
 import com.sdk.glassessdksample.ui.BluetoothUtils
 import com.sdk.glassessdksample.ui.DeviceBindActivity
+import com.sdk.glassessdksample.ui.HeyCyanCommandService
 import com.sdk.glassessdksample.ui.hasBluetooth
 import com.sdk.glassessdksample.ui.requestAllPermission
 import com.sdk.glassessdksample.ui.requestBluetoothPermission
@@ -28,24 +32,49 @@ import com.sdk.glassessdksample.ui.requestLocationPermission
 import com.sdk.glassessdksample.ui.requestNearbyWifiDevicesPermission
 import com.sdk.glassessdksample.ui.setOnClickListener
 import com.sdk.glassessdksample.ui.startKtxActivity
-import com.sdk.glassessdksample.ui.P2PController
-import com.sdk.glassessdksample.ui.wifi.p2p.WifiP2pManagerSingleton
-import android.net.wifi.p2p.WifiP2pDevice
-import android.net.wifi.p2p.WifiP2pInfo
-import org.greenrobot.eventbus.EventBus
+import android.widget.Toast
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import java.io.File
-import java.io.FileOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import org.greenrobot.eventbus.EventBus
+import org.greenrobot.eventbus.Subscribe
+import org.greenrobot.eventbus.ThreadMode
+import java.io.ByteArrayOutputStream
+import java.util.ArrayDeque
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+private const val DEVICE_INFO_BATTERY_CALLBACK = "device_info_panel"
+private const val MEDIA_SYNC_LOG_MAX_LINES = 100
+private const val THUMBNAIL_PREVIEW_INTERVAL_MS = 2000L
+private const val THUMBNAIL_CAPTURE_TIMEOUT_MS = 8000L
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: AcitivytMainBinding
-    private val deviceNotifyListener by lazy { MyDeviceNotifyListener() }
+    private var deviceInfoVersionsText = "--"
+    private var deviceInfoBatteryText = "--"
+    private var deviceInfoVolumeText = "--"
+    private var deviceInfoMediaCountText = "--"
+    private var deviceInfoTimeSyncText = "--"
+    private val mediaSyncLogLines = ArrayDeque<String>()
+    private val thumbnailPreviewScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var thumbnailPreviewLoopJob: Job? = null
+    private var thumbnailPreviewCaptureJob: Job? = null
+    private val mediaSyncProgressReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val line = intent.getStringExtra(HeyCyanCommandService.EXTRA_PROGRESS_LINE) ?: return
+            appendMediaSyncLog(line)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -53,6 +82,32 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         initView()
     }
+
+    override fun onStart() {
+        super.onStart()
+        if (!EventBus.getDefault().isRegistered(this)) {
+            EventBus.getDefault().register(this)
+        }
+        LocalBroadcastManager.getInstance(this).registerReceiver(
+            mediaSyncProgressReceiver,
+            IntentFilter(HeyCyanCommandService.ACTION_MEDIA_SYNC_PROGRESS)
+        )
+        renderButtonState()
+    }
+
+    override fun onStop() {
+        LocalBroadcastManager.getInstance(this).unregisterReceiver(mediaSyncProgressReceiver)
+        if (EventBus.getDefault().isRegistered(this)) {
+            EventBus.getDefault().unregister(this)
+        }
+        super.onStop()
+    }
+
+    override fun onDestroy() {
+        thumbnailPreviewScope.cancel()
+        super.onDestroy()
+    }
+
     inner class PermissionCallback : OnPermissionCallback {
         override fun onGranted(permissions: MutableList<String>, all: Boolean) {
             if (!all) {
@@ -95,6 +150,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         requestAllPermission(this, OnPermissionCallback { permissions, all ->  })
+        refreshDeviceInfoPanel()
+        renderButtonState()
     }
 
     inner class BluetoothPermissionCallback : OnPermissionCallback {
@@ -116,57 +173,29 @@ class MainActivity : AppCompatActivity() {
     private fun initView() {
         setOnClickListener(
             binding.btnScan,
-            binding.btnConnect,
             binding.btnDisconnect,
-            binding.btnAddListener,
-            binding.btnSetTime,
-            binding.btnVersion,
             binding.btnCamera,
             binding.btnVideo,
             binding.btnRecord,
-            binding.btnThumbnail,
-            binding.btnBt,
-            binding.btnBattery,
-            binding.btnVolume,
-            binding.btnMediaCount,
-            binding.btnDataDownload
+            binding.btnDataDownload,
+            binding.btnDataDownload2,
+            binding.btnThumbnailPreviewStart,
+            binding.btnThumbnailPreviewStop,
+            binding.btnMediaSyncLogClear,
+            binding.btnRefreshDeviceInfo,
+            binding.btnPeriodicCaptureStart,
+            binding.btnPeriodicCaptureOnlyStart,
+            binding.btnPeriodicCaptureStop
         ) {
             when (this) {
                 binding.btnScan -> {
                     requestLocationPermission(this@MainActivity, PermissionCallback())
                 }
 
-                binding.btnConnect -> {
-                    BleOperateManager.getInstance()
-                        .connectDirectly(DeviceManager.getInstance().deviceAddress)
-                }
-
                 binding.btnDisconnect -> {
                     BleOperateManager.getInstance().unBindDevice()
-                }
-
-                binding.btnAddListener -> {
-                    LargeDataHandler.getInstance().addOutDeviceListener(100, deviceNotifyListener)
-                }
-
-                binding.btnSetTime -> {
-                    Log.i("setTime", "setTime"+BleOperateManager.getInstance().isConnected)
-                    LargeDataHandler.getInstance().syncTime { _, _ -> }
-                }
-
-                binding.btnVersion -> {
-                    LargeDataHandler.getInstance().syncDeviceInfo { _, response ->
-                        if (response != null) {
-                            //wifi 固件版本
-                             response.wifiFirmwareVersion
-                            //wifi 产品版本
-                            response.wifiHardwareVersion
-                            //蓝牙产品版本
-                             response.hardwareVersion
-                            //蓝牙固件版本
-                             response.firmwareVersion
-                        }
-                    }
+                    resetDeviceInfoPanel()
+                    renderButtonState()
                 }
 
                 binding.btnCamera -> {
@@ -272,606 +301,399 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                binding.btnThumbnail -> {
-                    //thumbnailSize  0..6
-                    val thumbnailSize=0x02
-                    LargeDataHandler.getInstance().glassesControl(
-                        byteArrayOf(
-                            0x02,
-                            0x01,
-                            0x06,
-                            thumbnailSize.toByte(),
-                            thumbnailSize.toByte(),
-                            0x02
-                        )
-                    ) { _, it ->
-                        if (it.dataType == 1) {
-                            if (it.errorCode == 0) {
-                                when (it.workTypeIng) {
-                                    2 -> {
-                                        //眼镜正在录像
-                                    }
-                                    4 -> {
-                                        //眼镜正在传输模式
-                                    }
-                                    5 -> {
-                                        //眼镜正在OTA模式
-                                    }
-                                    1, 6 ->{
-                                        //眼镜正在拍照模式
-                                    }
-                                    7 -> {
-                                        //眼镜正在AI对话
-                                    }
-                                    8 ->{
-                                        //眼镜正在录音模式
-                                    }
-                                }
-                            } else {
-                                //触发AI拍照，上报缩略图会收到上报指令
-                            }
-                        }
-                    }
-                }
-
-                binding.btnBt -> {
-                    //BT扫描
-                    BleOperateManager.getInstance().classicBluetoothStartScan()
-
-                }
-                binding.btnBattery -> {
-                    //添加电量监听
-                    LargeDataHandler.getInstance().addBatteryCallBack("init") { _, response ->
-
-                    }
-                    //电量
-                    LargeDataHandler.getInstance().syncBattery()
-                }
-                binding.btnVolume ->{
-                    //读取音量控制
-                    LargeDataHandler.getInstance().getVolumeControl { _, response ->
-                        if (response != null) {
-                            //眼镜音量 音乐最小值 最大值 当前值
-                            response.minVolumeMusic
-                            response.maxVolumeMusic
-                            response.currVolumeMusic
-                            //眼镜电话 电话最小值 最大值 当前值
-                            response.minVolumeCall
-                            response.maxVolumeCall
-                            response.currVolumeCall
-                            //眼镜系统 系统最小值 最大值 当前值
-                            response.minVolumeSystem
-                            response.maxVolumeSystem
-                            response.currVolumeSystem
-                            //眼镜当前的模式
-                            response.currVolumeType
-                        }
-                    }
-                }
-                binding.btnMediaCount ->{
-                    LargeDataHandler.getInstance().glassesControl(byteArrayOf(0x02, 0x04)) { _, it ->
-                        if (it.dataType == 4) {
-                            val mediaCount = it.imageCount + it.videoCount + it.recordCount
-                            if (mediaCount > 0) {
-                                //眼镜有多少个媒体没有上传
-                            } else {
-                                //无
-                            }
-                        }
-                    }
-                }
                 binding.btnDataDownload -> {
-                    // 检查并请求必要的权限
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        // Android 13+ 需要 NEARBY_WIFI_DEVICES 权限
-                        requestNearbyWifiDevicesPermission(this@MainActivity, object : OnPermissionCallback {
-                            override fun onGranted(permissions: MutableList<String>, all: Boolean) {
-                                if (all) {
-                                    // 启动BLE+WiFi P2P数据下载
-                                    startDataDownload()
-                                }
-                            }
-
-                            override fun onDenied(permissions: MutableList<String>, never: Boolean) {
-                                super.onDenied(permissions, never)
-                                if (never) {
-                                    XXPermissions.startPermissionActivity(this@MainActivity, permissions)
-                                }
-                            }
-                        })
-                    } else {
-                        // Android 12 及以下版本直接启动下载
-                        startDataDownload()
-                    }
+                    runWithNearbyWifiPermission { startMediaSyncAllFromUi() }
+                }
+                binding.btnDataDownload2 -> {
+                    runWithNearbyWifiPermission { startMediaSyncBatchedDeleteFromUi() }
+                }
+                binding.btnThumbnailPreviewStart -> {
+                    startThumbnailPreview()
+                }
+                binding.btnThumbnailPreviewStop -> {
+                    stopThumbnailPreview()
+                }
+                binding.btnMediaSyncLogClear -> {
+                    clearMediaSyncLog()
+                }
+                binding.btnRefreshDeviceInfo -> {
+                    refreshDeviceInfoPanel()
+                }
+                binding.btnPeriodicCaptureStart -> {
+                    startPeriodicCaptureFromUi()
+                }
+                binding.btnPeriodicCaptureOnlyStart -> {
+                    startPeriodicCaptureOnlyFromUi()
+                }
+                binding.btnPeriodicCaptureStop -> {
+                    stopPeriodicCaptureFromUi()
                 }
             }
         }
+        renderButtonState()
     }
 
-    private fun startDataDownload() {
-        Log.i("DataDownload", "Starting BLE+WiFi P2P data download...")
-        
-        // 检查蓝牙连接状态
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    fun onBluetoothEvent(event: BluetoothEvent) {
+        renderButtonState()
+        if (event.connect) {
+            refreshDeviceInfoPanel()
+        } else {
+            stopThumbnailPreview()
+            resetDeviceInfoPanel()
+        }
+    }
+
+    private fun renderButtonState(capturing: Boolean = HeyCyanCommandService.isPeriodicCaptureRunning(this)) {
+        val connected = BleOperateManager.getInstance().isConnected
+        binding.btnScan.visibility = if (connected) View.GONE else View.VISIBLE
+        binding.btnDisconnect.visibility = if (connected) View.VISIBLE else View.GONE
+        binding.btnPeriodicCaptureStart.visibility = if (capturing) View.GONE else View.VISIBLE
+        binding.btnPeriodicCaptureOnlyStart.visibility = if (capturing) View.GONE else View.VISIBLE
+        binding.btnPeriodicCaptureStop.visibility = if (capturing) View.VISIBLE else View.GONE
+        renderThumbnailPreviewButtons()
+    }
+
+    private fun resetDeviceInfoPanel() {
+        deviceInfoVersionsText = "--"
+        deviceInfoBatteryText = "--"
+        deviceInfoVolumeText = "--"
+        deviceInfoMediaCountText = "--"
+        deviceInfoTimeSyncText = "--"
+        renderDeviceInfoPanel()
+    }
+
+    private fun refreshDeviceInfoPanel() {
+        renderDeviceInfoPanel()
         if (!BleOperateManager.getInstance().isConnected) {
-            Log.e("DataDownload", "Bluetooth not connected. Please connect to glasses first.")
             return
         }
-        
-        // 检查必要的权限
+        deviceInfoVersionsText = "Loading..."
+        deviceInfoBatteryText = "Loading..."
+        deviceInfoVolumeText = "Loading..."
+        deviceInfoMediaCountText = "Loading..."
+        deviceInfoTimeSyncText = "Syncing..."
+        renderDeviceInfoPanel()
+        requestDeviceVersions()
+        requestDeviceBattery()
+        requestDeviceVolume()
+        requestDeviceMediaCount()
+        requestDeviceTimeSync()
+    }
+
+    private fun requestDeviceVersions() {
+        if (!BleOperateManager.getInstance().isConnected) {
+            renderDeviceInfoPanel()
+            return
+        }
+        LargeDataHandler.getInstance().syncDeviceInfo { _, response ->
+            if (response != null) {
+                deviceInfoVersionsText = listOf(
+                    "BLE firmware: ${response.firmwareVersion.orDash()}",
+                    "BLE hardware: ${response.hardwareVersion.orDash()}",
+                    "Wi-Fi firmware: ${response.wifiFirmwareVersion.orDash()}",
+                    "Wi-Fi hardware: ${response.wifiHardwareVersion.orDash()}"
+                ).joinToString("\n")
+                runOnUiThread { renderDeviceInfoPanel() }
+            }
+        }
+    }
+
+    private fun requestDeviceBattery() {
+        if (!BleOperateManager.getInstance().isConnected) {
+            renderDeviceInfoPanel()
+            return
+        }
+        LargeDataHandler.getInstance().removeBatteryCallBack(DEVICE_INFO_BATTERY_CALLBACK)
+        LargeDataHandler.getInstance().addBatteryCallBack(DEVICE_INFO_BATTERY_CALLBACK) { _, response ->
+            if (response != null) {
+                val charging = if (response.isCharging) "charging" else "not charging"
+                deviceInfoBatteryText = "${response.battery}% ($charging)"
+                runOnUiThread { renderDeviceInfoPanel() }
+            }
+        }
+        LargeDataHandler.getInstance().syncBattery()
+    }
+
+    private fun requestDeviceVolume() {
+        if (!BleOperateManager.getInstance().isConnected) {
+            renderDeviceInfoPanel()
+            return
+        }
+        LargeDataHandler.getInstance().getVolumeControl { _, response ->
+            if (response != null) {
+                deviceInfoVolumeText = listOf(
+                    "Current type: ${response.currVolumeType}",
+                    "Music: ${response.currVolumeMusic}/${response.maxVolumeMusic} (min ${response.minVolumeMusic})",
+                    "Call: ${response.currVolumeCall}/${response.maxVolumeCall} (min ${response.minVolumeCall})",
+                    "System: ${response.currVolumeSystem}/${response.maxVolumeSystem} (min ${response.minVolumeSystem})"
+                ).joinToString("\n")
+                runOnUiThread { renderDeviceInfoPanel() }
+            }
+        }
+    }
+
+    private fun requestDeviceMediaCount() {
+        if (!BleOperateManager.getInstance().isConnected) {
+            renderDeviceInfoPanel()
+            return
+        }
+        LargeDataHandler.getInstance().glassesControl(byteArrayOf(0x02, 0x04)) { _, response ->
+            if (response.dataType == 4) {
+                val mediaCount = response.imageCount + response.videoCount + response.recordCount
+                deviceInfoMediaCountText = listOf(
+                    "Total: $mediaCount",
+                    "Images: ${response.imageCount}",
+                    "Videos: ${response.videoCount}",
+                    "Audio: ${response.recordCount}"
+                ).joinToString("\n")
+                runOnUiThread { renderDeviceInfoPanel() }
+            }
+        }
+    }
+
+    private fun requestDeviceTimeSync() {
+        if (!BleOperateManager.getInstance().isConnected) {
+            renderDeviceInfoPanel()
+            return
+        }
+        val requestedAt = System.currentTimeMillis()
+        LargeDataHandler.getInstance().syncTime { _, _ ->
+            deviceInfoTimeSyncText = "Requested at ${requestedAt.toTimeSyncString()}"
+            runOnUiThread { renderDeviceInfoPanel() }
+        }
+    }
+
+    private fun startThumbnailPreview() {
+        if (thumbnailPreviewLoopJob?.isActive == true) {
+            binding.textThumbnailPreviewStatus.text = "Preview already running."
+            return
+        }
+        if (!BleOperateManager.getInstance().isConnected) {
+            binding.textThumbnailPreviewStatus.text = "Connect glasses over BLE first."
+            return
+        }
+        binding.textThumbnailPreviewStatus.text = "Preview running."
+        renderThumbnailPreviewButtons(running = true)
+        thumbnailPreviewLoopJob = thumbnailPreviewScope.launch {
+            while (isActive) {
+                val tickStartedAt = SystemClock.elapsedRealtime()
+                if (thumbnailPreviewCaptureJob?.isActive == true) {
+                    binding.textThumbnailPreviewStatus.text = "Previous thumbnail capture still running; skipping tick."
+                } else {
+                    thumbnailPreviewCaptureJob = launch {
+                        captureAndShowThumbnail()
+                    }
+                }
+                val elapsed = SystemClock.elapsedRealtime() - tickStartedAt
+                delay((THUMBNAIL_PREVIEW_INTERVAL_MS - elapsed).coerceAtLeast(0L))
+            }
+        }
+    }
+
+    private fun stopThumbnailPreview() {
+        thumbnailPreviewLoopJob?.cancel()
+        thumbnailPreviewCaptureJob?.cancel()
+        thumbnailPreviewLoopJob = null
+        thumbnailPreviewCaptureJob = null
+        binding.textThumbnailPreviewStatus.text = getString(R.string.thumbnail_preview_idle)
+        renderThumbnailPreviewButtons(running = false)
+    }
+
+    private fun renderThumbnailPreviewButtons(running: Boolean = thumbnailPreviewLoopJob?.isActive == true) {
+        binding.btnThumbnailPreviewStart.visibility = if (running) View.GONE else View.VISIBLE
+        binding.btnThumbnailPreviewStop.visibility = if (running) View.VISIBLE else View.GONE
+    }
+
+    private suspend fun captureAndShowThumbnail() {
+        if (!BleOperateManager.getInstance().isConnected) {
+            binding.textThumbnailPreviewStatus.text = "BLE disconnected."
+            stopThumbnailPreview()
+            return
+        }
+        binding.textThumbnailPreviewStatus.text = "Capturing thumbnail..."
+        val bytes = withContext(Dispatchers.IO) { captureAiThumbnailBytes() }
+        if (bytes == null) {
+            binding.textThumbnailPreviewStatus.text = "Thumbnail capture timed out or returned empty data."
+            return
+        }
+        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        if (bitmap == null) {
+            binding.textThumbnailPreviewStatus.text = "Thumbnail decode failed (${bytes.size} bytes)."
+            return
+        }
+        binding.imageThumbnailPreview.setImageBitmap(bitmap)
+        binding.textThumbnailPreviewStatus.text =
+            "Updated at ${System.currentTimeMillis().toTimeSyncString()} (${bytes.size} bytes)."
+    }
+
+    private suspend fun captureAiThumbnailBytes(): ByteArray? {
+        return withTimeoutOrNull(THUMBNAIL_CAPTURE_TIMEOUT_MS) {
+            val out = ByteArrayOutputStream()
+            val done = CompletableDeferred<ByteArray?>()
+            var gotChunk = false
+            val callback: (Int, Boolean, ByteArray?) -> Unit = { _, isComplete, data ->
+                if (data != null && data.isNotEmpty()) {
+                    gotChunk = true
+                    out.write(data)
+                }
+                if (isComplete && !done.isCompleted) {
+                    done.complete(out.toByteArray().takeIf { it.isNotEmpty() })
+                }
+            }
+
+            // Same thumbnail path used by Alternative-HeyCyan-App-and-SDK: put glasses in AI
+            // thumbnail mode, trigger capture, then read BLE thumbnail chunks.
+            LargeDataHandler.getInstance().glassesControl(byteArrayOf(0x02, 0x01, 0x06, 0x02, 0x02)) { _, _ -> }
+            delay(250L)
+            LargeDataHandler.getInstance().glassesControl(byteArrayOf(0x02, 0x01, 0x01)) { _, _ -> }
+            delay(2500L)
+            LargeDataHandler.getInstance().getPictureThumbnails(callback)
+            delay(1500L)
+            if (!gotChunk && !done.isCompleted) {
+                LargeDataHandler.getInstance().getPictureThumbnails(callback)
+            }
+            done.await()
+        }
+    }
+
+    private fun renderDeviceInfoPanel() {
+        val connected = BleOperateManager.getInstance().isConnected
+        val ready = BleOperateManager.getInstance().isReady
+        val name = DeviceManager.getInstance().deviceName.orDash()
+        val address = DeviceManager.getInstance().deviceAddress.orDash()
+        binding.textDeviceInfoBody.text = if (!connected) {
+            getString(R.string.device_info_placeholder)
+        } else {
+            listOf(
+                "Name: $name",
+                "Address: $address",
+                "BLE connected: $connected",
+                "BLE ready: $ready",
+                "",
+                "Versions:",
+                deviceInfoVersionsText,
+                "",
+                "Battery:",
+                deviceInfoBatteryText,
+                "",
+                "Volume:",
+                deviceInfoVolumeText,
+                "",
+                "Undownloaded media:",
+                deviceInfoMediaCountText,
+                "",
+                "Time sync:",
+                deviceInfoTimeSyncText
+            ).joinToString("\n")
+        }
+    }
+
+    private fun Long.toTimeSyncString(): String {
+        return SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(this))
+    }
+
+    private fun String?.orDash(): String {
+        return takeUnless { it.isNullOrBlank() } ?: "--"
+    }
+
+    private fun startPeriodicCaptureFromUi() {
+        val seconds = readPeriodicCaptureSeconds()
+        sendCommandService(HeyCyanCommandService.COMMAND_PERIODIC_CAPTURE) {
+            putExtra(HeyCyanCommandService.EXTRA_SECONDS, seconds)
+        }
+        renderButtonState(capturing = true)
+        Toast.makeText(this, getString(R.string.periodic_capture_start_requested), Toast.LENGTH_SHORT).show()
+    }
+
+    private fun startPeriodicCaptureOnlyFromUi() {
+        val seconds = readPeriodicCaptureSeconds()
+        sendCommandService(HeyCyanCommandService.COMMAND_PERIODIC_CAPTURE_ONLY) {
+            putExtra(HeyCyanCommandService.EXTRA_SECONDS, seconds)
+        }
+        renderButtonState(capturing = true)
+        Toast.makeText(this, getString(R.string.periodic_capture_only_start_requested), Toast.LENGTH_SHORT).show()
+    }
+
+    private fun readPeriodicCaptureSeconds(): Int {
+        val seconds = binding.inputPeriodicCaptureInterval.text
+            ?.toString()
+            ?.toIntOrNull()
+            ?.coerceIn(1, 86_400)
+            ?: 60
+        binding.inputPeriodicCaptureInterval.setText(seconds.toString())
+        return seconds
+    }
+
+    private fun stopPeriodicCaptureFromUi() {
+        sendCommandService(HeyCyanCommandService.COMMAND_PERIODIC_CAPTURE_STOP)
+        renderButtonState(capturing = false)
+        Toast.makeText(this, getString(R.string.periodic_capture_stop_requested), Toast.LENGTH_SHORT).show()
+    }
+
+    private fun sendCommandService(command: String, configure: Intent.() -> Unit = {}) {
+        val intent = Intent(this, HeyCyanCommandService::class.java)
+            .setAction(HeyCyanCommandService.ACTION_COMMAND)
+            .putExtra(HeyCyanCommandService.EXTRA_COMMAND, command)
+        intent.configure()
+        startService(intent)
+    }
+
+    private fun runWithNearbyWifiPermission(action: () -> Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (!XXPermissions.isGranted(this, "android.permission.NEARBY_WIFI_DEVICES")) {
-                Log.e("DataDownload", "NEARBY_WIFI_DEVICES permission not granted")
-                return
-            }
-        }
-        
-        // 启动P2P连接和数据下载
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                // 1. 通过BLE获取眼镜的IP地址
-                val deviceIp = getDeviceIpFromBLE()
-                if (deviceIp.isNullOrEmpty()) {
-                    Log.e("DataDownload", "Failed to get device IP from BLE")
-                    return@launch
-                }
-                
-                Log.i("DataDownload", "Device IP from BLE: $deviceIp")
-                
-                // 2. 建立WiFi P2P连接 - 使用新的WifiP2pManagerSingleton
-                val wifiP2pManager = WifiP2pManagerSingleton.getInstance(this@MainActivity)
-                val receiver = wifiP2pManager.registerReceiver()
-                
-                try {
-                    // 添加回调监听器
-                    wifiP2pManager.addCallback(object : WifiP2pManagerSingleton.WifiP2pCallback {
-                        override fun onWifiP2pEnabled() {
-                            Log.i("DataDownload", "WiFi P2P enabled, creating P2P group...")
-                            // 创建P2P组（手机作为GO）
-                            wifiP2pManager.createGroup { success ->
-                                if (success) {
-                                    Log.i("DataDownload", "P2P group created successfully")
-                                    // 等待P2P连接完全建立
-                                    CoroutineScope(Dispatchers.IO).launch {
-                                        delay(2000) // 等待2秒让连接稳定
-                                        
-                                        // 测试连接是否可用
-                                        if (testConnection(deviceIp)) {
-                                            Log.i("DataDownload", "Connection test successful, starting downloads...")
-                                            
-                                            // 3. 下载媒体文件列表
-                                            downloadMediaList(deviceIp)
-                                        } else {
-                                            Log.e("DataDownload", "Connection test failed, cannot reach device")
-                                            withContext(Dispatchers.Main) {
-                                                showDownloadError("Cannot connect to glasses device. Please check P2P connection.")
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    Log.e("DataDownload", "Failed to create P2P group")
-                                    withContext(Dispatchers.Main) {
-                                        showDownloadError("Failed to create P2P group")
-                                    }
-                                }
-                            }
-                        }
-                        
-                        override fun onWifiP2pDisabled() {
-                            Log.e("DataDownload", "WiFi P2P disabled")
-                        }
-                        
-                        override fun onPeersChanged(peers: Collection<WifiP2pDevice>) {
-                            Log.i("DataDownload", "Found ${peers.size} P2P devices")
-                        }
-                        
-                        override fun onThisDeviceChanged(device: WifiP2pDevice) {
-                            Log.i("DataDownload", "This device changed: ${device.deviceName} - ${device.status}")
-                        }
-                        
-                        override fun onConnected(info: WifiP2pInfo) {
-                            Log.i("DataDownload", "P2P connected: groupFormed=${info.groupFormed}, isGroupOwner=${info.isGroupOwner}")
-                        }
-                        
-                        override fun onDisconnected() {
-                            Log.i("DataDownload", "P2P disconnected")
-                        }
-                        
-                        override fun onPeerDiscoveryStarted() {
-                            Log.i("DataDownload", "Peer discovery started")
-                        }
-                        
-                        override fun onPeerDiscoveryFailed(reason: Int) {
-                            Log.e("DataDownload", "Peer discovery failed: $reason")
-                        }
-                        
-                        override fun onConnectRequestSent() {
-                            Log.i("DataDownload", "Connect request sent")
-                        }
-                        
-                        override fun onConnectRequestFailed(reason: Int) {
-                            Log.e("DataDownload", "Connect request failed: $reason")
-                        }
-                        
-                        override fun connecting() {
-                            Log.i("DataDownload", "Connecting to P2P device...")
-                        }
-                        
-                        override fun cancelConnect() {
-                            Log.i("DataDownload", "P2P connection cancelled")
-                        }
-                        
-                        override fun cancelConnectFail(reason: Int) {
-                            Log.e("DataDownload", "Cancel connect failed: $reason")
-                        }
-                        
-                        override fun retryAlsoFailed() {
-                            Log.e("DataDownload", "P2P connection retry failed")
-                        }
-                    })
-                    
-                } finally {
-                    // 清理P2P连接
-                    wifiP2pManager.removeGroup { success ->
-                        Log.i("DataDownload", "P2P group removed: $success")
-                    }
-                    wifiP2pManager.unregisterReceiver(receiver)
-                }
-                
-            } catch (e: Exception) {
-                Log.e("DataDownload", "Error during data download: ${e.message}", e)
-            }
-        }
-    }
-    
-    private fun getDeviceIpFromBLE(): String? {
-        // 这里应该通过BLE特征值读取获取眼镜的IP地址
-        // 根据你的日志，眼镜会通过BLE上报IP地址
-        // 暂时返回一个示例IP，实际应该从BLE数据中解析
-        return "192.168.49.79"
-    }
-    
-    private fun downloadMediaList(deviceIp: String) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val url = "http://$deviceIp/files/media.config"
-                Log.i("DataDownload", "Downloading media list from: $url")
-                
-                val connection = URL(url).openConnection() as HttpURLConnection
-                connection.requestMethod = "GET"
-                connection.connectTimeout = 10000
-                connection.readTimeout = 30000
-                
-                if (connection.responseCode == HttpURLConnection.HTTP_OK) {
-                    val inputStream = connection.inputStream
-                    val content = inputStream.bufferedReader().use { it.readText() }
-                    
-                    // 显示下载的内容
-                    Log.i("DataDownload", "=== MEDIA CONFIG CONTENT ===")
-                    Log.i("DataDownload", content)
-                    Log.i("DataDownload", "=== END MEDIA CONFIG ===")
-                    
-                    // 解析媒体文件列表
-                    parseMediaList(content)
-                    
-                    withContext(Dispatchers.Main) {
-                        showDownloadSuccess("Media list downloaded successfully")
-                    }
-                } else {
-                    Log.e("DataDownload", "Failed to download media list. Response code: ${connection.responseCode}")
-                    withContext(Dispatchers.Main) {
-                        showDownloadError("Failed to download media list. Response code: ${connection.responseCode}")
+            requestNearbyWifiDevicesPermission(this@MainActivity, object : OnPermissionCallback {
+                override fun onGranted(permissions: MutableList<String>, all: Boolean) {
+                    if (all) {
+                        action()
                     }
                 }
-                
-                connection.disconnect()
-            } catch (e: Exception) {
-                Log.e("DataDownload", "Error downloading media list: ${e.message}", e)
-                withContext(Dispatchers.Main) {
-                    when (e) {
-                        is java.io.IOException -> {
-                            if (e.message?.contains("Cleartext HTTP traffic") == true) {
-                                showDownloadError("Network security blocked HTTP connection. Please check app settings.")
-                            } else if (e.message?.contains("Failed to connect") == true) {
-                                showDownloadError("Cannot connect to glasses device. Please ensure P2P connection is established.")
-                            } else {
-                                showDownloadError("Network error: ${e.message}")
-                            }
-                        }
-                        else -> showDownloadError("Download failed: ${e.message}")
-                    }
-                }
-            }
-        }
-    }
-    
-    private fun parseMediaList(content: String) {
-        // 解析媒体配置文件内容 - 这是一个包含JPG文件名的文本文件
-        Log.i("DataDownload", "Parsing media list content...")
-        
-        try {
-            // 按行分割，每行应该是一个文件名
-            val lines = content.trim().split("\n")
-            val jpgFiles = mutableListOf<String>()
-            
-            lines.forEach { line ->
-                val trimmedLine = line.trim()
-                if (trimmedLine.isNotEmpty()) {
-                    // 检查是否是JPG文件
-                    if (trimmedLine.endsWith(".jpg", ignoreCase = true) || 
-                        trimmedLine.endsWith(".jpeg", ignoreCase = true)) {
-                        jpgFiles.add(trimmedLine)
-                        Log.i("DataDownload", "Found JPG file: $trimmedLine")
-                    } else {
-                        Log.i("DataDownload", "Found non-JPG file: $trimmedLine")
-                    }
-                }
-            }
-            
-            Log.i("DataDownload", "Total JPG files found: ${jpgFiles.size}")
-            
-            if (jpgFiles.isNotEmpty()) {
-                // 开始下载所有JPG文件
-                downloadAllJpgFiles(jpgFiles)
-            } else {
-                Log.w("DataDownload", "No JPG files found in media.config")
-                withContext(Dispatchers.Main) {
-                    showDownloadError("No JPG files found in media.config")
-                }
-            }
-            
-        } catch (e: Exception) {
-            Log.e("DataDownload", "Error parsing media list: ${e.message}", e)
-            withContext(Dispatchers.Main) {
-                showDownloadError("Failed to parse media list: ${e.message}")
-            }
-        }
-    }
-    
-    private fun downloadAllJpgFiles(jpgFiles: List<String>) {
-        CoroutineScope(Dispatchers.IO).launch {
-            Log.i("DataDownload", "Starting download of ${jpgFiles.size} JPG files...")
-            
-            var successCount = 0
-            var failCount = 0
-            
-            for ((index, fileName) in jpgFiles.withIndex()) {
-                try {
-                    Log.i("DataDownload", "Downloading file ${index + 1}/${jpgFiles.size}: $fileName")
-                    
-                    val success = downloadSingleJpgFile(fileName)
-                    if (success) {
-                        successCount++
-                        Log.i("DataDownload", "✓ Successfully downloaded: $fileName")
-                    } else {
-                        failCount++
-                        Log.e("DataDownload", "✗ Failed to download: $fileName")
-                    }
-                    
-                    // 添加小延迟避免过快请求
-                    delay(500)
-                    
-                } catch (e: Exception) {
-                    failCount++
-                    Log.e("DataDownload", "Error downloading $fileName: ${e.message}", e)
-                }
-            }
-            
-            // 显示最终结果
-            val message = "Download completed: $successCount successful, $failCount failed"
-            Log.i("DataDownload", message)
-            
-            withContext(Dispatchers.Main) {
-                if (failCount == 0) {
-                    showDownloadSuccess("All $successCount files downloaded successfully!")
-                } else {
-                    showDownloadError("Download completed with errors: $successCount successful, $failCount failed")
-                }
-            }
-        }
-    }
-    
-    private suspend fun downloadSingleJpgFile(fileName: String): Boolean {
-        return try {
-            val deviceIp = getDeviceIpFromBLE() ?: return false
-            val url = "http://$deviceIp/files/$fileName"
-            Log.i("DataDownload", "Downloading: $url")
-            
-            val connection = URL(url).openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.connectTimeout = 10000
-            connection.readTimeout = 30000
-            
-            if (connection.responseCode == HttpURLConnection.HTTP_OK) {
-                val inputStream = connection.inputStream
-                val file = File(getExternalFilesDir("DCIM"), fileName)
-                val outputStream = FileOutputStream(file)
-                
-                val buffer = ByteArray(8192)
-                var bytesRead: Int
-                var totalBytes = 0L
-                
-                while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                    outputStream.write(buffer, 0, bytesRead)
-                    totalBytes += bytesRead
-                }
-                
-                outputStream.close()
-                inputStream.close()
-                
-                Log.i("DataDownload", "File downloaded: $fileName (${totalBytes} bytes)")
-                
-                // 保存到相册
-                saveToAlbum(file, fileName)
-                
-                true
-            } else {
-                Log.e("DataDownload", "Failed to download $fileName. Response code: ${connection.responseCode}")
-                false
-            }
-            
-        } catch (e: Exception) {
-            Log.e("DataDownload", "Error downloading $fileName: ${e.message}", e)
-            false
-        }
-    }
-    
-    private fun saveToAlbum(file: File, fileName: String) {
-        try {
-            // 保存文件信息到相册数据库
-            val albumInfo = mapOf(
-                "fileName" to fileName,
-                "filePath" to file.absolutePath,
-                "fileDate" to "2025-08-18",
-                "fileType" to 1,
-                "timestamp" to System.currentTimeMillis(),
-                "mac" to "71:33:1D:2C:CF:A0"
-            )
-            
-            Log.i("DataDownload", "Album info: $albumInfo")
-            // TODO: 实现保存到相册数据库的逻辑
-            
-        } catch (e: Exception) {
-            Log.e("DataDownload", "Error saving to album: ${e.message}", e)
-        }
-    }
-    
-    private fun showDownloadSuccess(message: String) {
-        // Show success message to user
-        Log.i("DataDownload", "SUCCESS: $message")
-        // You can implement a Toast or Snackbar here
-        // Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-    }
-    
-    private fun showDownloadError(message: String) {
-        // Show error message to user
-        Log.e("DataDownload", "ERROR: $message")
-        // You can implement a Toast or Snackbar here
-        // Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-    }
 
-    private fun testConnection(deviceIp: String): Boolean {
-        Log.i("DataDownload", "Testing connection to $deviceIp...")
-        try {
-            // 尝试连接到实际的媒体配置文件
-            val url = URL("http://$deviceIp/files/media.config")
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.connectTimeout = 5000 // 连接超时
-            connection.readTimeout = 5000 // 读取超时
-            
-            val responseCode = connection.responseCode
-            Log.i("DataDownload", "Connection test response code: $responseCode")
-            
-            if (responseCode == HttpURLConnection.HTTP_OK) {
-                // 尝试读取一小部分内容来确认连接可用
-                val inputStream = connection.inputStream
-                val buffer = ByteArray(1024)
-                val bytesRead = inputStream.read(buffer)
-                inputStream.close()
-                
-                Log.i("DataDownload", "Connection test successful - read $bytesRead bytes")
-                return true
-            }
-            
-            return false
-        } catch (e: Exception) {
-            Log.e("DataDownload", "Connection test failed: ${e.message}", e)
-            return false
+                override fun onDenied(permissions: MutableList<String>, never: Boolean) {
+                    super.onDenied(permissions, never)
+                    if (never) {
+                        XXPermissions.startPermissionActivity(this@MainActivity, permissions)
+                    }
+                }
+            })
+        } else {
+            action()
         }
     }
 
-    inner class MyDeviceNotifyListener : GlassesDeviceNotifyListener() {
+    private fun startMediaSyncAllFromUi() {
+        clearMediaSyncLog()
+        appendMediaSyncLog("Starting media sync")
+        sendCommandService(HeyCyanCommandService.COMMAND_SYNC_MEDIA_ALL)
+    }
 
-        @RequiresApi(Build.VERSION_CODES.O)
-        override fun parseData(cmdType: Int, response: GlassesDeviceNotifyRsp) {
-            when (response.loadData[6].toInt()) {
-                //眼镜电量上报
-                0x05 -> {
-                    //当前电量
-                    val battery = response.loadData[7].toInt()
-                    //是否在充电
-                    val changing = response.loadData[8].toInt()
-                }
-                //眼镜通过快捷识别
-                0x02 -> {
-                    if (response.loadData.size > 9 && response.loadData[9].toInt() == 0x02) {
-                        //要设置识别意图：eg 请帮我看看眼前是什么，图片中的内容
-                    }
-                    //获取图片缩略图
-                    LargeDataHandler.getInstance().getPictureThumbnails { cmdType, success, data ->
-                        //请将data存入路径,jpg的图片
-                    }
-                }
+    private fun startMediaSyncBatchedDeleteFromUi() {
+        clearMediaSyncLog()
+        appendMediaSyncLog("Starting media sync download2")
+        sendCommandService(HeyCyanCommandService.COMMAND_SYNC_MEDIA_ALL_BATCHED_DELETE)
+    }
 
-                0x03 -> {
-                    if (response.loadData[7].toInt() == 1) {
-                        //眼镜启动麦克风开始说话
-                    }
-                }
-                //ota 升级
-                0x04 -> {
-                    try {
-                        val download = response.loadData[7].toInt()
-                        val soc = response.loadData[8].toInt()
-                        val nor = response.loadData[9].toInt()
-                        //download 固件下载进度 soc 下载进度 nor 升级进度
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
-                }
+    private fun clearMediaSyncLog() {
+        mediaSyncLogLines.clear()
+        renderMediaSyncLog()
+    }
 
-                0x0c -> {
-                    //眼镜触发暂停事件，语音播报
-                    if (response.loadData[7].toInt() == 1) {
-                        //to do
-                    }
-                }
+    private fun appendMediaSyncLog(line: String) {
+        mediaSyncLogLines.addLast(line)
+        trimMediaSyncLog()
+        renderMediaSyncLog()
+    }
 
-                0x0d -> {
-                    //解除APP绑定事件
-                    if (response.loadData[7].toInt() == 1) {
-                        //to do
-                    }
-                }
-                //眼镜内存不足事件
-                0x0e -> {
+    private fun trimMediaSyncLog() {
+        while (mediaSyncLogLines.size > MEDIA_SYNC_LOG_MAX_LINES) {
+            mediaSyncLogLines.removeFirst()
+        }
+    }
 
-                }
-                //翻译暂停事件
-                0x10 -> {
-
-                }
-                //眼镜音量变化事件
-                0x12 -> {
-                    //音乐音量
-                    //最小音量
-                    response.loadData[8].toInt()
-                    //最大音量
-                    response.loadData[9].toInt()
-                    //当前音量
-                    response.loadData[10].toInt()
-
-                    //来电音量
-                    //最小音量
-                    response.loadData[12].toInt()
-                    //最大音量
-                    response.loadData[13].toInt()
-                    //当前音量
-                    response.loadData[14].toInt()
-
-                    //眼镜系统音量
-                    //最小音量
-                    response.loadData[16].toInt()
-                    //最大音量
-                    response.loadData[17].toInt()
-                    //当前音量
-                    response.loadData[18].toInt()
-
-                    //当前的音量模式
-                    response.loadData[19].toInt()
-
-                }
-            }
+    private fun renderMediaSyncLog() {
+        binding.textMediaSyncLogBody.text = if (mediaSyncLogLines.isEmpty()) {
+            getString(R.string.media_sync_log_placeholder)
+        } else {
+            mediaSyncLogLines.joinToString("\n")
         }
     }
 }

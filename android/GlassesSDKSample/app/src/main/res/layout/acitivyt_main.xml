@@ -1,15 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
+    android:fillViewport="true"
     tools:ignore="MissingClass">
 
-    <HorizontalScrollView
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="@dimen/qc_dp_80">
+        android:orientation="vertical"
+        android:paddingBottom="@dimen/qc_dp_24">
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/qc_dp_80">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -19,13 +25,7 @@
                 android:id="@+id/btn_scan"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/text_1" />
-
-            <Button
-                android:id="@+id/btn_connect"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/text_2" />
+                android:text="@string/connect" />
 
             <Button
                 android:id="@+id/btn_disconnect"
@@ -33,34 +33,16 @@
                 android:layout_height="wrap_content"
                 android:text="@string/text_3" />
 
-            <Button
-                android:id="@+id/btn_add_listener"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/text_11" />
-
         </LinearLayout>
-    </HorizontalScrollView>
+        </HorizontalScrollView>
 
-    <HorizontalScrollView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content">
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="match_parent">
-
-            <Button
-                android:id="@+id/btn_set_time"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/text_4" />
-
-            <Button
-                android:id="@+id/btn_version"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/text_5" />
 
             <Button
                 android:id="@+id/btn_camera"
@@ -76,48 +58,208 @@
 
 
         </LinearLayout>
-    </HorizontalScrollView>
+        </HorizontalScrollView>
 
-    <Button
-        android:id="@+id/btn_record"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/text_8" />
+        <Button
+            android:id="@+id/btn_record"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/text_8" />
 
-    <Button
-        android:id="@+id/btn_thumbnail"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/text_9" />
+        <Button
+            android:id="@+id/btn_data_download"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/text_15" />
 
-    <Button
-        android:id="@+id/btn_bt"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/text_10" />
+        <Button
+            android:id="@+id/btn_data_download2"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/text_download2" />
 
-    <Button
-        android:id="@+id/btn_battery"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/text_12" />
+        <TextView
+            android:id="@+id/text_thumbnail_preview_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/qc_dp_16"
+            android:layout_marginTop="@dimen/qc_dp_24"
+            android:layout_marginEnd="@dimen/qc_dp_16"
+            android:text="@string/thumbnail_preview_title"
+            android:textStyle="bold" />
 
-    <Button
-        android:id="@+id/btn_volume"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/text_13" />
+        <ImageView
+            android:id="@+id/image_thumbnail_preview"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/qc_dp_200"
+            android:layout_marginStart="@dimen/qc_dp_16"
+            android:layout_marginTop="@dimen/qc_dp_8"
+            android:layout_marginEnd="@dimen/qc_dp_16"
+            android:background="@android:color/black"
+            android:contentDescription="@string/thumbnail_preview_title"
+            android:scaleType="centerInside" />
 
-    <Button
-        android:id="@+id/btn_media_count"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/text_14" />
+        <TextView
+            android:id="@+id/text_thumbnail_preview_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/qc_dp_16"
+            android:layout_marginTop="@dimen/qc_dp_8"
+            android:layout_marginEnd="@dimen/qc_dp_16"
+            android:text="@string/thumbnail_preview_idle" />
 
-    <Button
-        android:id="@+id/btn_data_download"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/text_15" />
+        <LinearLayout
+            android:id="@+id/layout_thumbnail_preview_controls"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/qc_dp_16"
+            android:layout_marginTop="@dimen/qc_dp_8"
+            android:layout_marginEnd="@dimen/qc_dp_16"
+            android:orientation="horizontal">
 
-</LinearLayout>
+            <Button
+                android:id="@+id/btn_thumbnail_preview_start"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/thumbnail_preview_start" />
+
+            <Button
+                android:id="@+id/btn_thumbnail_preview_stop"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="@dimen/qc_dp_8"
+                android:layout_weight="1"
+                android:text="@string/thumbnail_preview_stop" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/text_media_sync_log_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/qc_dp_16"
+            android:layout_marginTop="@dimen/qc_dp_24"
+            android:layout_marginEnd="@dimen/qc_dp_16"
+            android:text="@string/media_sync_log_title"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/text_media_sync_log_body"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/qc_dp_16"
+            android:layout_marginTop="@dimen/qc_dp_8"
+            android:layout_marginEnd="@dimen/qc_dp_16"
+            android:text="@string/media_sync_log_placeholder"
+            android:textIsSelectable="true" />
+
+        <Button
+            android:id="@+id/btn_media_sync_log_clear"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/qc_dp_16"
+            android:layout_marginTop="@dimen/qc_dp_8"
+            android:text="@string/media_sync_log_clear" />
+
+        <TextView
+            android:id="@+id/text_device_info_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/qc_dp_16"
+            android:layout_marginTop="@dimen/qc_dp_24"
+            android:layout_marginEnd="@dimen/qc_dp_16"
+            android:text="@string/device_info_title"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/text_device_info_body"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/qc_dp_16"
+            android:layout_marginTop="@dimen/qc_dp_8"
+            android:layout_marginEnd="@dimen/qc_dp_16"
+            android:text="@string/device_info_placeholder"
+            android:textIsSelectable="true" />
+
+        <Button
+            android:id="@+id/btn_refresh_device_info"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/qc_dp_16"
+            android:layout_marginTop="@dimen/qc_dp_8"
+            android:text="@string/device_info_refresh" />
+
+        <TextView
+            android:id="@+id/text_periodic_capture_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/qc_dp_16"
+            android:layout_marginTop="@dimen/qc_dp_24"
+            android:layout_marginEnd="@dimen/qc_dp_16"
+            android:text="@string/periodic_capture_title"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:id="@+id/layout_periodic_capture_controls"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/qc_dp_16"
+            android:layout_marginTop="@dimen/qc_dp_8"
+            android:layout_marginEnd="@dimen/qc_dp_16"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/text_periodic_capture_interval_label"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/periodic_capture_interval_label" />
+
+                <EditText
+                    android:id="@+id/input_periodic_capture_interval"
+                    android:layout_width="@dimen/qc_dp_80"
+                    android:layout_height="wrap_content"
+                    android:autofillHints=""
+                    android:inputType="number"
+                    android:maxLines="1"
+                    android:text="60" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/qc_dp_8"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btn_periodic_capture_start"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/periodic_capture_start" />
+
+                <Button
+                    android:id="@+id/btn_periodic_capture_only_start"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="@dimen/qc_dp_8"
+                    android:layout_weight="1"
+                    android:text="@string/periodic_capture_only_start" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/btn_periodic_capture_stop"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/qc_dp_8"
+                android:text="@string/periodic_capture_stop" />
+        </LinearLayout>
+    </LinearLayout>
+
+</ScrollView>

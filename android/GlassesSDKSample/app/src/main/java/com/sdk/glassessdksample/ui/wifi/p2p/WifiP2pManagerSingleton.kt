@@ -1,6 +1,7 @@
 package com.sdk.glassessdksample.ui.wifi.p2p
 
 import android.content.Context
+import android.content.BroadcastReceiver
 import android.content.IntentFilter
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pDevice
@@ -10,11 +11,14 @@ import android.net.wifi.p2p.WifiP2pManager
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.oudmon.ble.base.communication.LargeDataHandler
 import java.util.concurrent.CopyOnWriteArrayList
 
 class WifiP2pManagerSingleton private constructor(private val context: Context) {
     
     companion object {
+        private const val TAG = "WifiP2pManagerSingleton"
+
         @Volatile
         private var instance: WifiP2pManagerSingleton? = null
         
@@ -39,7 +43,7 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
     private val intentFilter = IntentFilter().apply {
         addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION)
         addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
-        addAction(WifiP2pManager.WIFI_P2P_CONNECTION_STATE_CHANGE_ACTION)
+        addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
         addAction(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION)
     }
     
@@ -100,24 +104,28 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
     
     fun connectToDevice(device: WifiP2pDevice) {
         if (connecting) {
-            Log.d(TAG, "P2P正在连接,不调用连接返回")
+            Log.d(TAG, "P2P is already connecting, skipping duplicate connect")
             callbacks.forEach { it.connecting() }
             return
         }
         
         if (connected) {
-            Log.d(TAG, "P2P已经连接上了，直接返回")
+            Log.d(TAG, "P2P is already connected, skipping duplicate connect")
             return
         }
         
         wifiP2pDevice = device
         val config = WifiP2pConfig().apply {
             deviceAddress = device.deviceAddress
-            groupOwnerIntent = 0
+            // Match the Alternative app P2P setup. The glasses expect WPS PBC.
+            // https://github.com/FerSaiyan/Alternative-HeyCyan-App-and-SDK/blob/14bd397bd64571838ae81d95b848b5e016ed1d4f/android/CyanBridge/app/src/main/java/com/fersaiyan/cyanbridge/ui/wifi/p2p/WifiP2pManagerSingleton.kt#L151-L155
+            wps.setup = 0
         }
         
         connecting = true
-        Log.d(TAG, "已经在连接设备: ${device.deviceName}")
+        handler.removeCallbacks(connectTimeOut)
+        handler.postDelayed(connectTimeOut, 16000L)
+        Log.d(TAG, "Connecting P2P device: ${device.deviceName}")
         
         wifiP2pManager.connect(wifiP2pChannel, config, object : WifiP2pManager.ActionListener {
             override fun onSuccess() {
@@ -128,6 +136,7 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
             override fun onFailure(reason: Int) {
                 Log.e(TAG, "Connect request failed: $reason")
                 connecting = false
+                handler.removeCallbacks(connectTimeOut)
                 callbacks.forEach { it.onConnectRequestFailed(reason) }
             }
         })
@@ -153,13 +162,27 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
     }
     
     fun resetDeviceP2p() {
-        // Simplified for sample app - just log the action
-        Log.d(TAG, "resetDeviceP2p called")
+        Log.d(TAG, "resetDeviceP2p called - sending glassesControl[2,1,15]")
+        try {
+            // Vendor-specific glasses command observed in the Alternative app. It asks the
+            // glasses to reset/re-prepare their Wi-Fi P2P endpoint before retrying discovery.
+            // https://github.com/FerSaiyan/Alternative-HeyCyan-App-and-SDK/blob/14bd397bd64571838ae81d95b848b5e016ed1d4f/android/CyanBridge/app/src/main/java/com/fersaiyan/cyanbridge/ui/wifi/p2p/WifiP2pManagerSingleton.kt#L195-L205
+            LargeDataHandler.getInstance().glassesControl(byteArrayOf(0x02, 0x01, 0x0F)) { _, resp ->
+                Log.d(TAG, "resetDeviceP2p callback: type=${resp.dataType}, error=${resp.errorCode}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send resetDeviceP2p command", e)
+        }
     }
     
     fun resetFailCount() {
         connectRetry = 0
         discoveryRetry = 0
+        connected = false
+        connecting = false
+        wifiP2pDevice = null
+        handler.removeCallbacks(connectTimeOut)
+        handler.removeCallbacks(discoveryTimeOut)
     }
     
     fun resetPeerDiscovery() {
@@ -187,7 +210,7 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
             wifiP2pManager.requestConnectionInfo(channel, object : WifiP2pManager.ConnectionInfoListener {
                 override fun onConnectionInfoAvailable(info: WifiP2pInfo) {
                     Log.d(TAG, "Connection info available: groupFormed=${info.groupFormed}, isGroupOwner=${info.isGroupOwner}")
-                    onConnectionInfoAvailable(info)
+                    handleConnectionInfoAvailable(info)
                 }
             })
         }
@@ -248,15 +271,17 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
         callbacks.forEach { it.onThisDeviceChanged(device) }
     }
     
-    internal fun onConnectionInfoAvailable(info: WifiP2pInfo) {
+    private fun handleConnectionInfoAvailable(info: WifiP2pInfo) {
         connecting = false
         connected = info.groupFormed
+        handler.removeCallbacks(connectTimeOut)
         callbacks.forEach { it.onConnected(info) }
     }
     
     internal fun onDisconnected() {
         connecting = false
         connected = false
+        handler.removeCallbacks(connectTimeOut)
         callbacks.forEach { it.onDisconnected() }
     }
     
@@ -279,12 +304,12 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
             connecting = false
             if (connectRetry < 1) {
                 wifiP2pDevice?.let { device ->
-                    Log.d(TAG, "内部连接重试连接一次")
+                    Log.d(TAG, "Retrying P2P connect once")
                     connectToDevice(device)
                 }
                 connectRetry++
             } else {
-                Log.d(TAG, "不重连，等外部超时")
+                Log.d(TAG, "P2P connect timed out after retry")
                 callbacks.forEach { it.retryAlsoFailed() }
             }
         }
@@ -305,9 +330,5 @@ class WifiP2pManagerSingleton private constructor(private val context: Context) 
         fun cancelConnect()
         fun cancelConnectFail(reason: Int)
         fun retryAlsoFailed()
-    }
-    
-    companion object {
-        private const val TAG = "WifiP2pManagerSingleton"
     }
 } 

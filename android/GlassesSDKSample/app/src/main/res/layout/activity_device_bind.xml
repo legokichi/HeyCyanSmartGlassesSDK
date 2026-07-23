@@ -16,7 +16,7 @@
         app:layout_constraintTop_toBottomOf="@+id/titleBar"
         app:layout_constraintLeft_toLeftOf="parent"
         app:layout_constraintRight_toRightOf="parent"
-        android:text="扫描设备"
+        android:text="Scan Devices"
         />
 
     <androidx.recyclerview.widget.RecyclerView
